@@ -409,7 +409,14 @@ onSubmit(e){
 }}}
 
 // ----- プロジェクトの中 -----
-const pBack=()=>['#p/'+R.id,proj(R.id)?.name||'プロジェクト'];
+const pBack=()=>['#list','一覧'];
+// プロジェクトの見出し（タブ）
+function drawPtabs(pj){
+  const nav=$('#ptabs');nav.hidden=!pj;if(!pj){nav.innerHTML='';return}
+  const cur=R.name==='money'?M2SUB[ui.mtab]:R.sub;
+  nav.innerHTML=PTABS.map(([k,l])=>`<a href="#p/${esc(pj.id)}/${k}" data-k="${k}"${k===cur?' aria-current="page"':''}>${k==='detail'?(pj.type==='event'?'イベント詳細':'店舗詳細'):l}</a>`).join('');
+  const a=nav.querySelector('[aria-current]');if(a)a.scrollIntoView({block:'nearest',inline:'nearest'});
+}
 
 function vHub(){const id=R.id;return{title:proj(id).name,back:['#list','一覧'],html:`
 <div class="phead">
@@ -496,7 +503,7 @@ onSubmit(e){
     else if(m.price>0&&(m.price!==e.unitPrice||m.name!==e.category))b.update(doc(C.entries,e.id),{category:m.name,unitPrice:m.price,amount:m.price*(e.count||0),...stamp()});
   }
   b.commit().catch(writeErr);
-  toast('保存しました');location.hash='#p/'+id;
+  toast('保存しました');location.hash='#p/'+id+'/cost';
 },
 onLpDelete(el){el.remove()},
 onChange(e){
@@ -741,15 +748,13 @@ function mSwipe(){
     const ease='transform .28s cubic-bezier(.2,.8,.2,1)';
     const cur=sec(MTABS[s.i]);cur.style.transition=ease;cur.style.transform=`translateX(calc(${-k*100}% - ${k*16}px))`;
     for(const j of [-1,1]){const n=MTABS[s.i+j];if(!n)continue;const el=sec(n);el.style.transition=ease;el.style.transform=`translateX(calc(${(j-k)*100}% + ${(j-k)*16}px))`}
-    if(k)for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===MTABS[s.i+k]));
-    setTimeout(()=>{clear();mTab(MTABS[s.i+k]);window.scrollTo({top:Math.min(window.scrollY,$('#mtab').offsetTop)})},290);
+    setTimeout(()=>{clear();mTab(MTABS[s.i+k]);window.scrollTo({top:0})},290);
   };
   box.addEventListener('touchend',end);box.addEventListener('touchcancel',end);
 }
-function mTab(t){ui.mtab=t;for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===t));for(const s of ['in','log','sum'])$('#m-'+s).hidden=s!==t;for(const ta of $$('#view .memo-ta'))growMemo(ta)}
+function mTab(t){ui.mtab=t;if(R.name==='money'&&R.id){const s=M2SUB[t];if(R.sub!==s){R.sub=s;try{history.replaceState(null,'',`#p/${R.id}/${s}`)}catch(err){}}drawPtabs(proj(R.id))}for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===t));for(const s of ['in','log','sum'])$('#m-'+s).hidden=s!==t;for(const ta of $$('#view .memo-ta'))growMemo(ta)}
 function resetEntry(){ui.editId=null;ui.bBean=null;ui.bDest=null;$('#bItem').value='';$('#bQty').value='';drawBuy();$('#amount').value='';$('#memo').value='';growMemo($('#memo'));$('#eurl').value='';$('#save').textContent='記録する';$('#cancelWrap').hidden=true}
 function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トランザクション / 集計',back:pBack(),html:`
-<div class="tabs" id="mtab" role="tablist"><button type="button" role="tab" data-t="in">経費</button><button type="button" role="tab" data-t="log">トランザクション</button><button type="button" role="tab" data-t="sum">集計</button></div>
 <div class="mswipe" id="mswipe">
 <section id="m-in" hidden>
   <form class="card" data-f="entry" autocomplete="off">
@@ -848,7 +853,6 @@ refresh(){
 },
 onClick(e){
   let b;
-  if(b=e.target.closest('#mtab button')){mTab(b.dataset.t);return}
   if(b=e.target.closest('#cats button')){ui.cat=b.dataset.c;drawKind();return}
   if(b=e.target.closest('#bBean button')){ui.bBean=b.dataset.b==='1';drawBuy();return}
   if(b=e.target.closest('#bKind button')){if(!b.disabled){ui.bDest=ui.bDest===b.dataset.d?null:b.dataset.d;drawBuy()}return}
@@ -870,7 +874,7 @@ onClick(e){
     ui.editId=it.id;ui.cat=it.category;ui.person=it.person;drawKind();drawPeople();
     $('#bItem').value=it.itemId?(itemOf(it.itemId)?.name||it.itemName||''):(it.itemName||'');$('#bQty').value=it.qty?String(it.qty):'';ui.bBean=null;ui.bDest=null;drawBuy();
     $('#amount').value=Number(it.amount||0).toLocaleString('ja-JP');$('#eurl').value=it.url||'';$('#date').value=it.date||today();$('#memo').value=it.memo||'';growMemo($('#memo'));
-    $('#save').textContent='この内容で更新';$('#cancelWrap').hidden=false;mTab('in');$('#mtab').scrollIntoView({block:'start'});
+    $('#save').textContent='この内容で更新';$('#cancelWrap').hidden=false;mTab('in');window.scrollTo({top:0});
   }
 },
 onLpDelete(li){
@@ -1002,9 +1006,16 @@ async onClick(e){
 
 // ===== ページの切り替え =====
 const VIEWS={home:vHome,new:vNew,list:vList,stock:()=>vItems('stock'),gear:()=>vItems('gear'),shop:vShop,hub:vHub,detail:vDetail,pack:vPack,money:vMoney,pay:vPay};
+// プロジェクトの中は、上の見出し（タブ）で全ページに行き来する。経費 / トランザクション / 集計 は同じページの中の切り替え
+const PTABS=[['cost','経費'],['pack','在庫 / 備品'],['log','トランザクション'],['sum','集計'],['pay','精算'],['detail','詳細']];
+const SUB2M={cost:'in',log:'log',sum:'sum'},M2SUB={in:'cost',log:'log',sum:'sum'};
 function parse(){
   const p=location.hash.replace(/^#\/?/,'').split('/');
-  if(p[0]==='p'&&p[1])return{name:VIEWS[p[2]]&&!['home','new','list','stock','gear','shop'].includes(p[2])?p[2]:'hub',id:p[1]};
+  if(p[0]==='p'&&p[1]){
+    const s=p[2]==='money'?'cost':(p[2]||'cost');   // プロジェクトを開いたら、まず経費
+    if(SUB2M[s])return{name:'money',sub:s,id:p[1]};
+    return{name:['pack','pay','detail'].includes(s)?s:'money',sub:['pack','pay','detail'].includes(s)?s:'cost',id:p[1]};
+  }
   return{name:VIEWS[p[0]]&&p[0]!=='hub'?p[0]:'home'};
 }
 function show(){
@@ -1020,7 +1031,12 @@ function show(){
   document.body.classList.toggle('home',R.name==='home'&&!R.id);
   document.body.classList.remove('menu-open');layout();setMenu(false);
   if(user)drawMenu();
+  if(R.name==='money')ui.mtab=SUB2M[R.sub]||'in';
+  const pj=R.id&&user?proj(R.id):null;
+  if(pj){v.title=pj.name;v.back=['#list','一覧']}   // プロジェクトの中は、見出しにプロジェクト名
+  drawPtabs(pj);
   $('#title').textContent=v.title;document.title=v.title&&v.title!=='Ledger'?v.title+'｜Ledger':'Ledger';
+  if(pj)document.title=(PTABS.find(t=>t[0]===R.sub)?.[1]||'')+'｜'+pj.name;
   const b=$('#back');b.hidden=!v.back;if(v.back){b.href=v.back[0];b.textContent='‹ '+v.back[1]}
   $('#view').innerHTML=v.html;
   v.init?.();v.refresh?.();
@@ -1130,6 +1146,7 @@ function calOpen(el){
   const base=el.value||(el.id==='dEnd'&&$('#dDate')?.value)||(el.id==='pend'&&$('#pdate')?.value)||ymdStr(new Date());
   pop.dataset.ym=base.slice(0,7);
   el.parentElement.style.position='relative';el.parentElement.appendChild(pop);calDraw(pop,el);
+  pop.style.top=(el.offsetTop+el.offsetHeight+4)+'px';pop.style.left=el.offsetLeft+'px';   // 欄のすぐ下に出す（欄が大きな枠の中にあっても）
 }
 $('#view').addEventListener('mousedown',e=>{
   if(e.target.closest('.calpop')){e.preventDefault();return}   // 押しても欄から外れないように
