@@ -1,31 +1,30 @@
 /* VOICE: 屋台の帳場。手早く、迷わず、片手で。
    IDEA: 出店ブースのレジ横に置く会計伝票
-   PICTURE: 入力フォームそのもの。上に焙煎色の帯で大きな利益表示
-   COLOUR/TYPE: 焙煎豆の茶を主に、売上は葉の緑、経費はコーヒーチェリーの赤／Zen Kaku Gothic New
+   PICTURE: 入力フォームそのもの。上に大きな利益表示
+   COLOUR/TYPE: メイン#f8fbf8を広く、アクセント1#028760・アクセント2#ffdb4fは要所だけ。経費は赤／Zen Kaku Gothic New
    LAYOUT: 1カラム最大640px、帯→タブ→各画面。スマホ前提 */
-:root{color-scheme:light dark;
---bg:light-dark(#f6f2ed,#15100d);--card:light-dark(#ffffff,#211915);--ink:light-dark(#22150e,#f2e8de);--sub:light-dark(#6c5a4e,#b8a596);
---line:light-dark(#e3d8cc,#3a2d26);--chip:light-dark(#efe6dc,#2c221d);--roast:#3a2217;--roastInk:#f7ede3;--roastSub:#d4bba7;
---sale:light-dark(#2c7543,#71c98e);--cost:light-dark(#bf3328,#f27b6f);--focus:light-dark(#c47a1e,#f0b25a)}
-:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+:root{color-scheme:light;
+--bg:#f8fbf8;--card:#ffffff;--ink:#14231d;--sub:#566a62;
+--line:#dce8e1;--chip:#eaf3ee;--roast:#028760;--roastInk:#ffffff;--roastSub:#d3eee3;
+--accent:#ffdb4f;--accentInk:#2a2300;
+--sale:#028760;--cost:#c2372c;--focus:#d9a800}
 *{box-sizing:border-box;min-width:0}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Zen Kaku Gothic New",system-ui,sans-serif;overflow-x:clip}
 .wrap{max-width:640px;margin:0 auto;padding:0 16px}
-header{background:var(--roast);color:var(--roastInk);padding:20px 0 22px}
-header h1{font-size:15px;font-weight:500;margin:0;color:var(--roastSub)}
+header{background:var(--bg);color:var(--ink);padding:20px 0 18px}
+header h1{font-size:15px;font-weight:500;margin:0;color:var(--sub)}
 .big{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:6px}
-.big b{font-size:clamp(36px,10vw,52px);line-height:1.05;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
-.big span{font-size:14px;color:var(--roastSub)}
+.big b{color:var(--roast);font-size:clamp(36px,10vw,52px);line-height:1.05;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.big span{font-size:14px;color:var(--sub)}
 .sub{display:flex;gap:20px;flex-wrap:wrap;margin-top:8px;font-size:15px;font-variant-numeric:tabular-nums}
-.sub i{font-style:normal;color:var(--roastSub);margin-right:6px}
-.filter{margin-top:14px;display:flex;align-items:center;gap:8px;font-size:14px;color:var(--roastSub)}
-.filter select{background:#4a2e21;color:var(--roastInk);border:1px solid #6b4634;border-radius:10px;padding:8px 10px;font:inherit;font-size:16px;max-width:100%}
+.sub i{font-style:normal;color:var(--sub);margin-right:6px}
+.filter{margin-top:14px;display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sub)}
+.filter select{background:var(--card);color:var(--ink);border:1.5px solid var(--line);border-radius:10px;padding:8px 10px;font:inherit;font-size:16px;max-width:100%}
 nav{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
 nav .wrap{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
 nav button{appearance:none;border:0;background:none;color:var(--sub);font:inherit;font-weight:500;min-height:48px;border-bottom:3px solid transparent;cursor:pointer}
 nav[hidden]{display:none}
 nav button[aria-selected=true]{color:var(--ink);border-color:var(--roast);font-weight:700}
-:root[data-theme=dark] nav button[aria-selected=true],:root:not([data-theme=light]) nav button[aria-selected=true]{border-color:light-dark(var(--roast),var(--roastSub))}
 main{padding:18px 0 60px}
 .status{font-size:14px;color:var(--sub);min-height:0}
 .status.warn{color:var(--cost);padding:10px 12px;border:1px solid var(--cost);border-radius:12px;margin-bottom:12px}
@@ -38,16 +37,14 @@ label.l,.l{display:block;font-size:14px;font-weight:500;color:var(--sub);margin:
 .seg button{font-size:17px;font-weight:700}
 .seg button[aria-pressed=true][data-k=sale]{background:var(--sale);border-color:var(--sale);color:#fff}
 .seg button[aria-pressed=true][data-k=cost]{background:var(--cost);border-color:var(--cost);color:#fff}
-:root:not([data-theme=light]) .seg button[aria-pressed=true]{color:light-dark(#fff,#1a120e)}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
-.chips button[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:700}
+.chips button[aria-pressed=true]{background:var(--accent);color:var(--accentInk);border-color:#e0bc2a;font-weight:700}
 input,select,textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;width:100%}
 #amount{font-size:28px;font-weight:700;padding:8px 12px;font-variant-numeric:tabular-nums}
 .amt{position:relative}.amt span{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:22px;color:var(--sub)}.amt input{padding-left:36px}
 .row2{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:10px}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .go{appearance:none;width:100%;margin-top:20px;min-height:54px;border:0;border-radius:14px;background:var(--roast);color:var(--roastInk);font:inherit;font-size:18px;font-weight:700;cursor:pointer}
-:root:not([data-theme=light]) .go{background:light-dark(var(--roast),#d9a066);color:light-dark(var(--roastInk),#1a110c)}
 .go:disabled{opacity:.5}
 .ghost{appearance:none;background:none;border:1.5px solid var(--line);border-radius:12px;color:var(--ink);font:inherit;font-size:14px;min-height:40px;padding:6px 14px;cursor:pointer}
 .msg{margin-top:10px;font-size:15px;min-height:1.5em}
