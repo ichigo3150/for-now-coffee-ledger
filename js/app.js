@@ -131,7 +131,7 @@ $('#copyCsv').addEventListener('click',async e=>{
 
 $('#loginBtn').addEventListener('click',async()=>{
   $('#loginNote').textContent='';
-  try{await signInWithPopup(auth,new GoogleAuthProvider())}
+  try{await signInWithPopup(auth,new GoogleAuthProvider().setCustomParameters({prompt:'select_account'}))}
   catch(err){if(err.code!=='auth/popup-closed-by-user'&&err.code!=='auth/cancelled-popup-request')$('#loginNote').textContent='ログインできませんでした（'+err.code+'）。ポップアップがブロックされていないか確認してください。'}
 });
 $('#logout').addEventListener('click',()=>signOut(auth));
