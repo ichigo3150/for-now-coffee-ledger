@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // このアプリを使える人（Googleアカウントのメールアドレス）
+    // 人を増やすときは、カンマ区切りで1行ずつ足す
+    function isMember() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in [
+          'ctmy315@gmail.com'
+        ];
+    }
+
+    // 記録の中身が正しい形かチェック
+    function validEntry() {
+      let d = request.resource.data;
+      return d.amount is number && d.amount > 0
+        && d.kind in ['sale', 'cost']
+        && d.event is string && d.event.size() <= 100
+        && d.person is string;
+    }
+
+    match /entries/{id} {
+      allow read, delete: if isMember();
+      allow create, update: if isMember() && validEntry();
+    }
+  }
+}

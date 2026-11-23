@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>出店収支ノート</title>
+<meta name="theme-color" content="#3a2217">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="収支ノート">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>コーヒーフェス出店　収支ノート</h1>
+    <div class="big"><b id="hProfit">¥0</b><span>利益</span></div>
+    <div class="sub"><span><i>売上</i><b id="hSale">¥0</b></span><span><i>経費</i><b id="hCost">¥0</b></span></div>
+    <div class="filter"><label for="fEvent">対象</label><select id="fEvent"><option value="">すべてのイベント</option></select></div>
+  </div>
+</header>
+<nav hidden><div class="wrap" role="tablist">
+  <button role="tab" data-t="in" aria-selected="true">入力</button>
+  <button role="tab" data-t="log" aria-selected="false">記録</button>
+  <button role="tab" data-t="sum" aria-selected="false">集計</button>
+  <button role="tab" data-t="pay" aria-selected="false">精算</button>
+</div></nav>
+<main><div class="wrap">
+  <div id="status" class="status" role="status"></div>
+
+  <section id="login" hidden>
+    <div class="card" style="text-align:center">
+      <p style="margin:0 0 6px;font-weight:700;font-size:18px">ログインしてください</p>
+      <p class="note" style="margin:0">岩間・小林・谷の3人のGoogleアカウントだけが使えます。</p>
+      <button class="go" id="loginBtn" type="button">Googleでログイン</button>
+      <p class="msg ng" id="loginNote"></p>
+    </div>
+  </section>
+
+  <section id="t-in" hidden>
+    <form id="form" class="card" autocomplete="off">
+      <div class="l">種類</div>
+      <div class="seg" id="kind"><button type="button" data-k="sale" aria-pressed="true">売上</button><button type="button" data-k="cost" aria-pressed="false">経費</button></div>
+      <div class="l">科目</div>
+      <div class="chips" id="cats"></div>
+      <label class="l" for="amount">金額</label>
+      <div class="amt"><span>¥</span><input id="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="0"></div>
+      <div class="l" id="whoLabel">受け取った人</div>
+      <div class="chips" id="people"></div>
+      <div class="row2">
+        <div><label class="l" for="event">イベント</label><input id="event" list="events" placeholder="例：東京コーヒーフェス"><datalist id="events"></datalist></div>
+        <div><label class="l" for="date">日付</label><input id="date" type="date"></div>
+      </div>
+      <label class="l" for="memo">メモ</label>
+      <input id="memo" placeholder="例：ドリップ 20杯分">
+      <button class="go" id="save" type="submit">記録する</button>
+      <div style="text-align:center;margin-top:10px" id="cancelWrap" hidden><button type="button" class="ghost" id="cancel">編集をやめる</button></div>
+      <div class="msg" id="msg" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <section id="t-log" hidden>
+    <div class="bar"><span id="logCount" class="note" style="margin:0"></span><button type="button" class="ghost" id="copyCsv">CSVをコピー</button></div>
+    <ul class="list" id="list"></ul>
+  </section>
+
+  <section id="t-sum" hidden>
+    <h2>イベント別</h2>
+    <div class="scroll"><table><thead><tr><th>イベント</th><th>売上</th><th>経費</th><th>利益</th></tr></thead><tbody id="evRows"></tbody></table></div>
+    <h2>経費の内訳</h2>
+    <div id="catRows"></div>
+    <p class="note">内訳は上の「対象」で選んだイベントの分です。</p>
+  </section>
+
+  <section id="t-pay" hidden>
+    <h2>だれがだれに渡すか</h2>
+    <ul class="pay" id="moves"></ul>
+    <h2>3人の内訳</h2>
+    <div class="scroll"><table><thead><tr><th>メンバー</th><th>立て替えた経費</th><th>手元の売上</th><th>精算額</th></tr></thead><tbody id="payRows"></tbody></table></div>
+    <p class="note">利益を3人で同じ額に分ける計算です。精算額がプラスの人は受け取り、マイナスの人は渡します。対象は上の「対象」で選んだイベントです。</p>
+  </section>
+  <p class="note" id="account" hidden style="text-align:center;margin-top:36px"><span id="who"></span>　<button type="button" class="ghost" id="logout">ログアウト</button></p>
+</div></main>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
