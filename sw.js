@@ -1,7 +1,7 @@
 // アプリの画面（HTML・CSS・JS・アイコン）を端末に保存して、電波がなくても開けるようにする仕組み。
 // 記録データの同期は Firebase 側が自動でやるので、ここでは扱いません。
 // ファイルを更新したら VERSION の数字を1つ上げると、各端末に新しい版が届きます。
-const VERSION = 'v11';
+const VERSION = 'v12';
 const CACHE = 'coffee-ledger-' + VERSION;
 const FILES = [
   './',
@@ -32,7 +32,8 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // ブラウザに残っている古いファイルを使わず、毎回サーバーに新しい版があるか確かめる
+    fetch(e.request.mode === 'navigate' ? new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }) : new Request(e.request, { cache: 'no-cache' }))
       .then(res => {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
