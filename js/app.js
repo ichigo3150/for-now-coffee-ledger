@@ -112,7 +112,7 @@ function projCards(list){
 // メイン画面：店舗・イベントをすべて合わせた収支
 function vHome(){return{title:'',html:`
 <div class="phead">
-  <div class="note" style="margin:0">すべての店舗・イベントの合計</div>
+  <div class="note" style="margin:0">すべての店舗 / イベントの合計</div>
   <div class="big"><b id="tProfit"></b><span>利益</span></div>
   <div class="sub" id="tVisW"><span><i>来客数</i><b id="tVis"></b></span></div>
 </div>
@@ -140,7 +140,7 @@ function setMenu(open){
 function drawMenu(){
   $('#cP').textContent=D.projects.length+'件';
   const st=D.items.filter(i=>i.kind==='stock'),out=st.filter(i=>(i.qty||0)<=0).length;
-  $('#cS').textContent=st.length+'品目'+(out?`・在庫切れ ${out}`:'');
+  $('#cS').textContent=st.length+'品目'+(out?` / 在庫切れ ${out}`:'');
   $('#cG').textContent=D.items.filter(i=>i.kind==='gear').length+'点';
   $('#cShop').textContent=D.shop.name||'未登録';
   const here='#'+(location.hash.replace(/^#\/?/,'').split('/')[0]);
@@ -149,7 +149,17 @@ function drawMenu(){
 $('#menuBtn').addEventListener('click',()=>setMenu(true));
 $('#menuClose').addEventListener('click',()=>setMenu(false));
 // 左上の「Ledger」でトップへ（埋め込み表示でも確実に戻れるよう、自分で切り替える）
-$('.logo').addEventListener('click',e=>{e.preventDefault();if(pageKey()!=='#')location.hash='#/';else show()});
+for(const lg of $$('.logo'))lg.addEventListener('click',e=>{e.preventDefault();setMenu(false);if(pageKey()!=='#')location.hash='#/';else show()});
+// 画面の幅で切り替え：広い画面はメニューを左に常に表示、スマホは ☰ で開く
+const WIDE=matchMedia('(min-width:601px)');
+function layout(){
+  const side=!!user&&WIDE.matches,phone=!!user&&!WIDE.matches;
+  if(!side)document.body.classList.remove('side');
+  document.body.classList.toggle('phone',phone);$('#brand').hidden=!phone;
+  if(side){document.body.classList.remove('menu-open');document.body.classList.add('side')}
+  const open=side||document.body.classList.contains('menu-open'),d=$('#drawer');d.inert=!open;d.setAttribute('aria-hidden',String(!open));
+}
+WIDE.addEventListener?.('change',()=>{layout();presDraw()});
 $('#scrim').addEventListener('click',()=>setMenu(false));
 $('#drawer').addEventListener('click',e=>{if(e.target.closest('a'))setMenu(false)});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('menu-open')){setMenu(false);$('#menuBtn').focus()}});
@@ -226,7 +236,7 @@ init(){ui.iBean=null;drawIBean()},
 refresh(){
   const list=D.items.filter(i=>i.kind===kind).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja'));
   fill($('#ilist'),list.length?list.map(i=>`<li data-lp data-id="${esc(i.id)}" class="${kind==='stock'&&(i.qty||0)<=0?'out':''}">
-    <span class="nm" data-act="rename" title="タップで名前を直す・長押しで削除">${esc(i.name)}</span>
+    <span class="nm" data-act="rename" title="タップで名前を直す / 長押しで削除">${esc(i.name)}</span>
     <span class="qty"><button type="button" class="step" data-step="${i.bean?-0.1:-1}" aria-label="${i.bean?'0.1kg':'1つ'}減らす">−</button><input data-fld="qty" inputmode="decimal" value="${esc(qf(i.qty).replace(/,/g,''))}" aria-label="${k.qtyL}"><button type="button" class="step" data-step="${i.bean?0.1:1}" aria-label="${i.bean?'0.1kg':'1つ'}増やす">＋</button><span class="unit">${esc(unitOf(i))}</span></span></li>`).join(''):empty('まだ登録がありません'));
 },
 onSubmit(e){
@@ -279,7 +289,7 @@ function shopForm(){
     <button type="button" class="ghost" data-act="addLink">＋ URLを追加</button>
     <p class="note">消すときは左の印を長押し（URLを空にして保存しても消えます）。</p>
     <label class="l" for="sCats">経費の科目（1行に1つ。経費の入力ページに、この順で並びます）</label><textarea id="sCats" rows="6">${esc(costCats().join('\n'))}</textarea>
-    <label class="l" for="sMemo">メモ</label><textarea id="sMemo" rows="3" placeholder="例：営業許可の番号、連絡先など">${esc(s.memo)}</textarea>
+    <label class="l" for="sMemo">メモ</label><div class="memow"><textarea id="sMemo" class="memo-ta" rows="3" placeholder="例：営業許可の番号、連絡先など">${esc(s.memo)}</textarea><button type="button" class="memo-ok" aria-label="メモの入力を確定">✓</button></div>
     <button class="go" type="submit">保存する</button>
     <div style="text-align:center;margin-top:10px"><button type="button" class="ghost" data-act="cancel">やめる</button></div>
   </form>`;
@@ -344,8 +354,8 @@ refresh(){
   const es=entriesOf(id),t=totals(es);
   $('#hProfit').textContent=yen(t.p);$('#hSale').textContent=yen(t.s);$('#hCost').textContent=yen(t.c);
   $('#mDt').textContent=(p.type==='event'?'イベント':'店舗')+'詳細';
-  $('#mD').textContent=[p.place,p.fee?'出店料 '+yen(p.fee):''].filter(Boolean).join('・')||'場所・出店料・URLなど';
-  const ps=packList(id).filter(x=>!x.off);$('#mK').textContent=ps.length?`${ps.length}点・積んだ ${ps.filter(x=>x.checked).length}`:'';
+  $('#mD').textContent=[p.place,p.fee?'出店料 '+yen(p.fee):''].filter(Boolean).join(' / ')||'場所 / 出店料 / URLなど';
+  const ps=packList(id).filter(x=>!x.off);$('#mK').textContent=ps.length?`${ps.length}点 / 積んだ ${ps.filter(x=>x.checked).length}`:'';
   $('#mM').textContent=es.length+'件の記録';
   const mv=moves(payRows(es));$('#mP').textContent=es.length?(mv.length?mv.length+'件の受け渡し':'精算の必要なし'):'記録がまだありません';
 }}}
@@ -367,11 +377,11 @@ function vDetail(){const id=R.id,p=proj(id),ev=p.type==='event';return{title:(ev
   <button type="button" class="ghost" data-act="addMenu">＋ メニューを追加</button>
   <p class="note">売上数は「トランザクション」のページで入れると、値段×売上数で売上になります。消すときは左の印を長押し（そのメニューの売上数も消えます）。</p>
   <label class="l" for="dUrl">URL</label><input id="dUrl" inputmode="url" placeholder="https://">
-  <label class="l" for="dMemo">メモ</label><textarea id="dMemo" rows="4" placeholder="例：電源なし、駐車場は裏手"></textarea>
+  <label class="l" for="dMemo">メモ</label><div class="memow"><textarea id="dMemo" class="memo-ta" rows="4" placeholder="例：電源なし、駐車場は裏手"></textarea><button type="button" class="memo-ok" aria-label="メモの入力を確定">✓</button></div>
   <button class="go" type="submit">保存する</button>
 </form>
 <p id="dLink" class="note"></p>
-<div class="danger"><button type="button" class="ghost" data-act="delP">このプロジェクトを削除</button><p class="note">記録・持ち物リストもまとめて消えます（在庫の数は戻りません）。</p></div>`,
+<div class="danger"><button type="button" class="ghost" data-act="delP">このプロジェクトを削除</button><p class="note">記録と持ち物リストもまとめて消えます（在庫の数は戻りません）。</p></div>`,
 init(){
   $('#dName').value=p.name||'';
   if(ev){$('#dDate').value=p.date||'';$('#dEnd').value=p.endDate||''}
@@ -446,7 +456,7 @@ function packRow(pk){
   return `<li data-lp data-id="${esc(pk.id)}" class="${pk.checked?'done':''}">
     <label class="chk"><input type="checkbox" data-fld="checked"${pk.checked?' checked':''}><span class="nm">${esc(it?it.name:(pk.name||'（削除された品目）'))}</span></label>
     ${it?`<span class="stk">${st?'在庫':'登録'} ${qf(it.qty)}${u}</span>`:'<span></span>'}
-    <span class="meta">持っていく<span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${esc(qf(pk.take||0).replace(/,/g,''))}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}${st?`<i>・</i>使った<input data-fld="used" inputmode="decimal" value="${esc(+(pk.used||0))}" aria-label="使った数">${u}`:''}${bought?`<i>・</i>買った <b>${qf(bought)}</b>${u}`:''}${st&&(bought||pk.used)?`<i>・</i>残り <b>${qf(left)}</b>${u}`:''}</span>
+    <span class="meta">持っていく<span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${esc(qf(pk.take||0).replace(/,/g,''))}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}${st&&pk.used?`<i>/</i>使った <b>${qf(pk.used)}</b>${u}`:''}${bought?`<i>/</i>買った <b>${qf(bought)}</b>${u}`:''}${st&&(bought||pk.used)?`<i>/</i>残り <b>${qf(left)}</b>${u}`:''}</span>
   </li>`;
 }
 // 持ち物リスト：在庫・備品の全品目を出す。まだ記録のない品目は仮の行（_v）で、数を入れたときに保存する
@@ -471,9 +481,9 @@ const setTake=(pk,v)=>{
   const b=writeBatch(fs);putPk(b,pk,{take:+v.toFixed(3)});b.commit().catch(writeErr);
   const inp=$$('#view .pk li').find(x=>x.dataset.id===pk.id)?.querySelector('[data-fld="take"]');if(inp)inp.value=qf(v).replace(/,/g,'');
 };
-return{title:'在庫・備品',back:pBack(),html:`
+return{title:'在庫 / 備品',back:pBack(),html:`
 <div class="bar"><b id="prog"></b></div>
-<p class="note" style="margin-top:0">積んだらチェック。最後に「使った数」を入れると、残った分だけ在庫に残ります。在庫は上の欄から選んで追加、備品は全部出ています。使わない物は行を長押しして外せます。</p>
+<p class="note" style="margin-top:0">積んだらチェック。「使った数」は、経費 / トランザクション / 集計 の「集計」で入れます。在庫は上の欄から選んで追加、備品は全部出ています。使わない物は行を長押しして外せます。</p>
 <h2>在庫</h2>
 <div class="pkadd"><select id="pkSel" aria-label="在庫から選ぶ"></select><button type="button" class="ghost" data-act="addStock">追加</button></div>
 <ul class="pk" id="pkStock"></ul>
@@ -530,6 +540,36 @@ onChange(e){
   }
 }}}
 
+// 使った数（集計のページで入れる）。変えた分だけ在庫の数を動かす
+// 品目の科目：経費で買ったときの科目（いちばん新しい記録）。なければ品目に覚えている科目
+function itemCat(itemId){
+  const es=D.entries.filter(e=>e.itemId===itemId&&e.category).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  return es[0]?.category||itemOf(itemId)?.cat||'';
+}
+// 科目の並び順（屋号情報の科目の順。科目なしは最後）
+const catRank=c=>{if(!c)return 999;const i=costCats().indexOf(c);return i<0?500:i};
+function setUsed(pid,pkid,v){
+  // 持ち物リストにまだ入っていない在庫は、ここで入れる（仮の行として扱う）
+  const iid=pkid.slice(pid.length+1),it0=itemOf(iid);
+  const pk=D.packs.find(x=>x.id===pkid)||(it0?{id:pkid,projectId:pid,itemId:iid,kind:it0.kind,name:it0.name,take:0,used:0,checked:false,_v:true}:null);if(!pk)return;
+  v=Math.max(0,+(+v).toFixed(3));
+  const it=itemOf(pk.itemId);let over=null;
+  // 在庫の総数（いまの在庫＋このイベントですでに使った分）を超えたら知らせて、総数までにする
+  if(it){const mx=+((it.qty||0)+(pk.used||0)).toFixed(3);
+    if(v>mx){
+      const row=$$('#usedRows .ur').find(r=>r.dataset.pk===pk.id);
+      if(row){row.classList.add('over');setTimeout(()=>row.classList.remove('over'),2200);const inp=row.querySelector('[data-fld="used"]');if(inp)inp.value=qf(mx).replace(/,/g,'')}
+      over=`${it.name}の在庫は${qf(mx)}${unitOf(it)}です。それより多くは入れられません`;
+      v=mx;
+    }}
+  const delta=+(v-(pk.used||0)).toFixed(3);if(!delta){if(over)toast(over,true);return}
+  const b=writeBatch(fs);
+  if(pk._v)b.set(doc(C.packs,pk.id),{...packBase(pk),used:v,off:false,...stamp()});else b.update(doc(C.packs,pk.id),{used:v,...(pk.off?{off:false}:{}),...stamp()});
+  if(it)b.update(doc(C.items,it.id),{qty:increment(-delta),...stamp()});
+  b.commit().catch(writeErr);
+  if(over)toast(over+`（${qf(v)}${unitOf(it)}にしました）`,true);
+  else if(it)toast(`${it.name}：在庫を${qf(Math.abs(delta))}${unitOf(it)}${delta>0?'減らしました':'戻しました'}`);
+}
 // 経費・トランザクション・集計
 function drawKind(){
   ui.kind='cost';   // 入力は経費だけ
@@ -547,7 +587,7 @@ function drawBuy(){
   const name=$('#bItem').value.trim(),it=name?itemByName(name):null;
   const dest=buyDest(it),bean=it?!!it.bean:(dest==='stock'&&(ui.bBean??guessBean(name)));
   $('#bDest').hidden=!name;
-  $('#bDestL').textContent=it?`${IK[it.kind].t}に同じ名前があるので、数量を足します`:(dest?`${IK[dest].t}に新しく追加します（もう一度押すと取り消し）`:'在庫・備品にない品目です。追加するなら押してください（押さなければ経費の記録だけ）');
+  $('#bDestL').textContent=it?`${IK[it.kind].t}に同じ名前があるので、数量を足します`:(dest?`${IK[dest].t}に新しく追加します（もう一度押すと取り消し）`:'在庫 / 備品にない品目です。追加するなら押してください（押さなければ経費の記録だけ）');
   for(const b of $$('#bKind button')){b.setAttribute('aria-pressed',String(b.dataset.d===dest));b.disabled=!!it}
   $('#bHow').hidden=!name||!!it||!dest;$('#bBeanW').hidden=dest!=='stock';
   for(const b of $$('#bBean button'))b.setAttribute('aria-pressed',String((b.dataset.b==='1')===bean));
@@ -556,10 +596,58 @@ function drawBuy(){
   $('#bQty').placeholder=bean?'0.0':'0';
 }
 function drawPeople(){$('#people').innerHTML=people().map(p=>`<button type="button" data-p="${esc(p)}" style="--pc:${A40(colorOf(p))}" aria-pressed="${p===ui.person}">${esc(p)}</button>`).join('')}
-function mTab(t){ui.mtab=t;for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===t));for(const s of ['in','log','sum'])$('#m-'+s).hidden=s!==t}
-function resetEntry(){ui.editId=null;ui.bBean=null;ui.bDest=null;$('#bItem').value='';$('#bQty').value='';$('#bUnitIn').value='';drawBuy();$('#amount').value='';$('#memo').value='';$('#save').textContent='記録する';$('#cancelWrap').hidden=true}
-function vMoney(){const id=R.id;ui.editId=null;return{title:'経費・トランザクション・集計',back:pBack(),html:`
+// 経費 / トランザクション / 集計 を、指で左右にスワイプして切り替える（指に合わせて引っぱられるように動く）
+const MTABS=['in','log','sum'];
+function mSwipe(){
+  const box=$('#mswipe');if(!box)return;
+  let st=null;
+  const W=()=>box.clientWidth||1;
+  const sec=t=>$('#m-'+t);
+  const clear=()=>{for(const t of MTABS){const el=sec(t);el.style.cssText='';el.classList.remove('mside')}box.style.height=''};
+  box.addEventListener('touchstart',e=>{
+    if(e.touches.length!==1)return;const t=e.touches[0];
+    if(t.clientX<28||e.target.closest('textarea,.lpbar,.tmpop'))return;   // 画面の左端は「戻る」のスワイプに使う
+    st={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,lock:null,i:MTABS.indexOf(ui.mtab)};
+  },{passive:true});
+  box.addEventListener('touchmove',e=>{
+    if(!st)return;const t=e.touches[0],dx=t.clientX-st.x,dy=t.clientY-st.y;
+    if(st.lock===null){
+      if(Math.abs(dx)<8&&Math.abs(dy)<8)return;
+      st.lock=Math.abs(dx)>Math.abs(dy)*1.2?'x':'y';
+      if(st.lock==='x'){
+        // となりのページを左右に並べて見えるようにする
+        box.style.height=box.offsetHeight+'px';
+        for(const k of [-1,1]){const n=MTABS[st.i+k];if(!n)continue;const el=sec(n);el.hidden=false;el.classList.add('mside');el.style.transform=`translateX(calc(${k*100}% + ${k*16}px))`}
+        lpCancel();
+      }
+    }
+    if(st.lock!=='x')return;
+    e.preventDefault();
+    let d=dx;const edge=(d>0&&st.i===0)||(d<0&&st.i===MTABS.length-1);
+    if(edge)d=d*0.3;   // 端ではゴムのように少しだけ動く
+    st.dx=d;
+    sec(MTABS[st.i]).style.transform=`translateX(${d}px)`;
+    for(const k of [-1,1]){const n=MTABS[st.i+k];if(n)sec(n).style.transform=`translateX(calc(${k*100}% + ${k*16+d}px))`}
+  },{passive:false});
+  const end=()=>{
+    if(!st||st.lock!=='x'){st=null;return}
+    const s=st;st=null;const w=W(),v=s.dx/Math.max(1,Date.now()-s.t);
+    let k=0;
+    if((s.dx<-w*0.22||v<-0.45)&&MTABS[s.i+1])k=1;
+    if((s.dx>w*0.22||v>0.45)&&MTABS[s.i-1])k=-1;
+    const ease='transform .28s cubic-bezier(.2,.8,.2,1)';
+    const cur=sec(MTABS[s.i]);cur.style.transition=ease;cur.style.transform=`translateX(calc(${-k*100}% - ${k*16}px))`;
+    for(const j of [-1,1]){const n=MTABS[s.i+j];if(!n)continue;const el=sec(n);el.style.transition=ease;el.style.transform=`translateX(calc(${(j-k)*100}% + ${(j-k)*16}px))`}
+    if(k)for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===MTABS[s.i+k]));
+    setTimeout(()=>{clear();mTab(MTABS[s.i+k]);window.scrollTo({top:Math.min(window.scrollY,$('#mtab').offsetTop)})},290);
+  };
+  box.addEventListener('touchend',end);box.addEventListener('touchcancel',end);
+}
+function mTab(t){ui.mtab=t;for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===t));for(const s of ['in','log','sum'])$('#m-'+s).hidden=s!==t;for(const ta of $$('#view .memo-ta'))growMemo(ta)}
+function resetEntry(){ui.editId=null;ui.bBean=null;ui.bDest=null;$('#bItem').value='';$('#bQty').value='';$('#bUnitIn').value='';drawBuy();$('#amount').value='';$('#memo').value='';growMemo($('#memo'));$('#save').textContent='記録する';$('#cancelWrap').hidden=true}
+function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トランザクション / 集計',back:pBack(),html:`
 <div class="tabs" id="mtab" role="tablist"><button type="button" role="tab" data-t="in">経費</button><button type="button" role="tab" data-t="log">トランザクション</button><button type="button" role="tab" data-t="sum">集計</button></div>
+<div class="mswipe" id="mswipe">
 <section id="m-in" hidden>
   <form class="card" data-f="entry" autocomplete="off">
     <div class="l" style="margin-top:0">科目</div><div class="chips" id="cats"></div>
@@ -582,7 +670,7 @@ function vMoney(){const id=R.id;ui.editId=null;return{title:'経費・トラン�
     <div class="amt"><span>¥</span><input id="amount" inputmode="numeric" placeholder="0"></div>
     <div class="chips" id="people" style="margin-top:16px" aria-label="払った人"></div>
     <label class="l" for="date">日付</label><input id="date" type="date">
-    <label class="l" for="memo">メモ</label><input id="memo" placeholder="例：ドリップ 20杯分">
+    <label class="l" for="memo">メモ</label><div class="memow"><textarea id="memo" class="memo-ta" rows="1" placeholder="例：ドリップ 20杯分"></textarea><button type="button" class="memo-ok" aria-label="メモの入力を確定">✓</button></div>
     <button class="go" id="save" type="submit">記録する</button>
     <p class="fmsg" role="status"></p>
     <div style="text-align:center;margin-top:10px" id="cancelWrap" hidden><button type="button" class="ghost" data-act="cancel">編集をやめる</button></div>
@@ -605,13 +693,19 @@ function vMoney(){const id=R.id;ui.editId=null;return{title:'経費・トラン�
   <ul class="list" id="list"></ul>
 </section>
 <section id="m-sum" hidden>
+  <div class="card used">
+    <div class="bar" style="margin:0 0 4px"><b>使った数</b><span class="note" style="margin:0">入れた分だけ在庫から引きます</span></div>
+    <div id="usedRows"></div>
+    <p class="fmsg" role="status"></p>
+  </div>
   <div class="sumbox"><div><i>売上</i><b class="s" id="sS"></b></div><div><i>経費</i><b class="c" id="sC"></b></div><div><i>利益</i><b id="sP"></b></div></div>
   <h2>売上の内訳</h2><div id="saleRows"></div>
   <h2>経費の内訳</h2><div id="catRows"></div>
-</section>`,
+</section>
+</div>`,
 init(){
   const p=proj(id);$('#date').value=(p.type==='event'&&p.date)?p.date:today();
-  drawKind();drawPeople();mTab(ui.mtab);
+  drawKind();drawPeople();mTab(ui.mtab);mSwipe();
 },
 refresh(){
   drawKind();   // 屋号情報で科目が変わったら並べ直す
@@ -632,10 +726,19 @@ refresh(){
   $('#list').innerHTML=sorted.length?sorted.map(entryRow).join(''):empty('まだ記録がありません。「経費」から最初の1件を記録しましょう。');
   // 経費タブの下：記録した順に下へ足していく
   const costs=list.filter(e=>e.kind==='cost').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
-  $('#cCount').textContent=costs.length?`${costs.length}件・${yen(costs.reduce((a,e)=>a+(e.amount||0),0))}`:'';
+  $('#cCount').textContent=costs.length?`${costs.length}件 / ${yen(costs.reduce((a,e)=>a+(e.amount||0),0))}`:'';
   $('#clist').innerHTML=costs.length?costs.map(entryRow).join(''):empty('まだ経費の記録がありません');
   $('#bList').innerHTML=[...D.items].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja')).map(i=>`<option value="${esc(i.name)}">${i.kind==='gear'?'備品':'在庫'} ${qf(i.qty)}${esc(unitOf(i))}</option>`).join('');
   const t=totals(list);
+  // 使った数（持ち物リストに入れた在庫）
+  // 在庫に登録してある品目をすべて出す（科目ごとにまとめて並べる）
+  {const by=new Map(packsOf(id).map(x=>[x.itemId,x]));
+   const rows=D.items.filter(i=>i.kind==='stock').map(it=>by.get(it.id)||{id:id+'_'+it.id,projectId:id,itemId:it.id,kind:'stock',take:0,used:0,_v:true})
+     .sort((a,b)=>catRank(itemCat(a.itemId))-catRank(itemCat(b.itemId))||(itemOf(a.itemId).name||'').localeCompare(itemOf(b.itemId).name||'','ja'));
+   fill($('#usedRows'),rows.length?rows.map(pk=>{const it=itemOf(pk.itemId),u=esc(unitOf(it)),bt=boughtOf(id,pk.itemId),left=(pk.take||0)+bt-(pk.used||0),st=it.bean?0.1:1;
+     const cat=itemCat(pk.itemId);
+     return `<div class="ur" data-pk="${esc(pk.id)}"><span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span><span class="nm">${esc(it.name)}<span class="meta">持っていく ${qf(pk.take||0)}${u}${bt?` / 買った ${qf(bt)}${u}`:''} / 残り <b class="${left<0?'c':''}">${qf(left)}</b>${u}</span></span>
+       <span class="qty"><button type="button" class="step" data-ustep="${-st}" aria-label="減らす">−</button><input data-fld="used" inputmode="decimal" value="${esc(qf(pk.used||0).replace(/,/g,''))}" aria-label="${esc(it.name)}の使った数"><button type="button" class="step" data-ustep="${st}" aria-label="増やす">＋</button><span class="unit">${u}</span></span></div>`}).join(''):'<p class="note" style="margin:0">在庫に品目を登録すると、ここで使った数を入れられます。</p>')}
   $('#sS').textContent=yen(t.s);$('#sC').textContent=yen(t.c);$('#sP').textContent=yen(t.p);
   const bars=(kind,cls)=>{const r=[...new Set([...(kind==='cost'?costCats():CATS.sale),...list.filter(e=>e.kind===kind).map(e=>e.category)])].map(c=>({c,v:list.filter(e=>e.kind===kind&&e.category===c).reduce((a,e)=>a+(e.amount||0),0)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);const mx=Math.max(1,...r.map(x=>x.v));
     return r.length?r.map(x=>`<div class="cat"><span>${esc(x.c)}</span><span class="track"><span class="fill ${cls}" style="width:${(x.v/mx*100).toFixed(1)}%"></span></span><b>${yen(x.v)}</b></div>`).join(''):`<p class="empty">${kind==='sale'?'売上':'経費'}の記録がありません</p>`};
@@ -647,6 +750,7 @@ onClick(e){
   if(b=e.target.closest('#cats button')){ui.cat=b.dataset.c;drawKind();return}
   if(b=e.target.closest('#bBean button')){ui.bBean=b.dataset.b==='1';drawBuy();return}
   if(b=e.target.closest('#bKind button')){if(!b.disabled){ui.bDest=ui.bDest===b.dataset.d?null:b.dataset.d;drawBuy()}return}
+  if(b=e.target.closest('[data-ustep]')){const r=b.closest('.ur'),cur=D.packs.find(x=>x.id===r.dataset.pk)?.used||0;setUsed(id,r.dataset.pk,cur+Number(b.dataset.ustep));return}
   if(b=e.target.closest('[data-vstep]')){setVisitors(id,(proj(id)?.visitors||0)+Number(b.dataset.vstep));return}
   if(b=e.target.closest('[data-mstep]')){const r=b.closest('.msr'),cur=menuEntry(id,r.dataset.mid)?.count||0;setMenuCount(id,r.dataset.mid,cur+Number(b.dataset.mstep));return}
   if(b=e.target.closest('#holder button')){
@@ -663,7 +767,7 @@ onClick(e){
   if(e.target.closest('[data-edit]')&&it.kind==='cost'){
     ui.editId=it.id;ui.cat=it.category;ui.person=it.person;drawKind();drawPeople();
     $('#bItem').value=it.itemId?(itemOf(it.itemId)?.name||it.itemName||''):(it.itemName||'');$('#bQty').value=it.qty?String(it.qty):'';ui.bBean=null;ui.bDest=null;drawBuy();
-    $('#amount').value=Number(it.amount||0).toLocaleString('ja-JP');$('#date').value=it.date||today();$('#memo').value=it.memo||'';
+    $('#amount').value=Number(it.amount||0).toLocaleString('ja-JP');$('#date').value=it.date||today();$('#memo').value=it.memo||'';growMemo($('#memo'));
     $('#save').textContent='この内容で更新';$('#cancelWrap').hidden=false;mTab('in');$('#mtab').scrollIntoView({block:'start'});
   }
 },
@@ -678,6 +782,7 @@ onLpDelete(li){
 },
 onChange(e){
   if(e.target.id==='visitors'){setVisitors(id,num(e.target.value));return}
+  if(e.target.dataset.fld==='used'){setUsed(id,e.target.closest('.ur').dataset.pk,num(e.target.value));return}
   if(e.target.dataset.fld==='cnt'){const r=e.target.closest('.msr');setMenuCount(id,r.dataset.mid,num(e.target.value))}
 },
 onInput(e){
@@ -707,7 +812,7 @@ onSubmit(e){
       // 同じ名前の品目がなければ、押した方（在庫／備品）に新しく作る
       const kind=buyDest(null),bean=kind==='stock'&&(ui.bBean??guessBean(buy.name)),ref=doc(C.items);
       it={id:ref.id,kind,name:buy.name,bean,unit:kind==='gear'?'':bean?'kg':$('#bUnitIn').value.trim(),qty:0,_new:true};
-      b.set(ref,{kind:it.kind,name:it.name,unit:it.unit,...(bean?{bean:true}:{}),qty:0,createdAt:now,...stamp()});
+      b.set(ref,{kind:it.kind,name:it.name,unit:it.unit,cat:ui.cat,...(bean?{bean:true}:{}),qty:0,createdAt:now,...stamp()});
     }
     Object.assign(body,{itemId:it.id,itemName:it.name,qty:buy.q,unit:unitOf(it)});
   }
@@ -723,15 +828,15 @@ onSubmit(e){
   b.set(old?doc(C.entries,old.id):doc(C.entries),body);
   b.commit().catch(writeErr);
   const was=!!old;resetEntry();
-  toast((was?'更新しました：':'記録しました：')+body.category+' '+yen(amount)+(buy?(was?`・${it.name}の${IK[it.kind].t}も直しました`:`・${it.name} ${qf(buy.q)}${unitOf(it)}を${IK[it.kind].t}に足しました`):(was&&old?.itemId?'・在庫も直しました':''))+(navigator.onLine?'':'（電波が戻ったら送信します）'));
+  toast((was?'更新しました：':'記録しました：')+body.category+' '+yen(amount)+(buy?(was?` / ${it.name}の${IK[it.kind].t}も直しました`:` / ${it.name} ${qf(buy.q)}${unitOf(it)}を${IK[it.kind].t}に足しました`):(was&&old?.itemId?' / 在庫も直しました':''))+(navigator.onLine?'':'（電波が戻ったら送信します）'));
 }}}
 // 記録1件の行（トランザクション・経費タブで共通）
 function entryRow(e){
   const nm=e.itemId?(itemOf(e.itemId)?.name||e.itemName||''):(e.itemName||''),u=e.itemId?(unitOf(itemOf(e.itemId))||e.unit||''):'';
   return `<li data-lp data-id="${esc(e.id)}">
-    <span class="what">${esc(e.category)}<span class="meta" style="font-weight:400"> ・ ${esc(e.person)}</span></span>
+    <span class="what">${esc(e.category)}<span class="meta" style="font-weight:400"> / ${esc(e.person)}</span></span>
     <span class="money ${e.kind==='sale'?'s':'c'}">${e.kind==='sale'?'+':'−'}${yen(e.amount).replace('−','')}</span>
-    <span class="meta">${md(e.date)}${e.menuId?`　・${yen(e.unitPrice||0)} × ${e.count||0}`:''}${nm?`　・${esc(nm)}${e.qty?' '+qf(e.qty)+esc(u):''}${e.itemId?`（${IK[itemOf(e.itemId)?.kind||'stock'].t}）`:''}`:''}${e._pending?'　・未送信':''}</span>
+    <span class="meta">${md(e.date)}${e.menuId?` / ${yen(e.unitPrice||0)} × ${e.count||0}`:''}${nm?` / ${esc(nm)}${e.qty?' '+qf(e.qty)+esc(u):''}${e.itemId?`（${IK[itemOf(e.itemId)?.kind||'stock'].t}）`:''}`:''}${e._pending?' / 未送信':''}</span>
     <span class="ops">${e.kind==='cost'?'<button type="button" class="ghost" data-edit>編集</button>':''}</span>
     ${e.memo?`<span class="memo">${esc(e.memo)}</span>`:''}</li>`;
 }
@@ -797,14 +902,14 @@ function show(){
   }
   else v=VIEWS[R.name]();
   V=v;
-  // ログイン中はメニューを左に常に表示（☰ は使わない）
-  document.body.classList.toggle('side',!!user);document.body.classList.toggle('home',R.name==='home'&&!R.id);$('#menuBtn').hidden=true;
-  {const d=$('#drawer');d.inert=!user;d.setAttribute('aria-hidden',String(!user))}
+  document.body.classList.toggle('home',R.name==='home'&&!R.id);
+  document.body.classList.remove('menu-open');layout();setMenu(false);
   if(user)drawMenu();
   $('#title').textContent=v.title;document.title=v.title&&v.title!=='Ledger'?v.title+'｜Ledger':'Ledger';
   const b=$('#back');b.hidden=!v.back;if(v.back){b.href=v.back[0];b.textContent='‹ '+v.back[1]}
   $('#view').innerHTML=v.html;
   v.init?.();v.refresh?.();
+  for(const ta of $$('#view .memo-ta'))growMemo(ta);
   window.scrollTo({top:0});
   presSend({x:null,y:null,focus:null});presDraw();
 }
@@ -958,6 +1063,20 @@ $('#view').addEventListener('keydown',e=>{
   submitForm(el.form);
 });
 $('#view').addEventListener('submit',e=>e.preventDefault());
+// ===== メモの欄 =====
+// PC：Return で入力を確定、⌘（Ctrl）+ Return で改行。iPhone など指で操作する画面：Return で改行、✓ ボタンで確定
+const TOUCH=matchMedia('(pointer:coarse)');
+const growMemo=ta=>{if(!ta.classList.contains('memo-ta'))return;ta.style.height='auto';ta.style.height=Math.max(ta.scrollHeight+3,0)+'px'};
+$('#view').addEventListener('keydown',e=>{
+  const ta=e.target;if(!ta.classList?.contains('memo-ta')||e.key!=='Enter'||e.isComposing||e.keyCode===229)return;
+  if(TOUCH.matches)return;   // 指の画面はそのまま改行
+  e.preventDefault();
+  if(e.metaKey||e.ctrlKey){ta.setRangeText('\n',ta.selectionStart,ta.selectionEnd,'end');growMemo(ta);ta.dispatchEvent(new Event('input',{bubbles:true}))}
+  else ta.blur();
+});
+$('#view').addEventListener('input',e=>growMemo(e.target));
+$('#view').addEventListener('pointerdown',e=>{if(e.target.closest('.memo-ok'))e.preventDefault()});   // 押したときに欄から外れないように（確定は下の click で）
+$('#view').addEventListener('click',e=>{const b=e.target.closest('.memo-ok');if(b){b.parentElement.querySelector('textarea').blur()}});
 for(const t of ['change','input']){
   const k='on'+t[0].toUpperCase()+t.slice(1);
   $('#view').addEventListener(t,e=>{if(V&&V[k])V[k](e)});
