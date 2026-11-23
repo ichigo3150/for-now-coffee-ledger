@@ -15,6 +15,8 @@ const A40=c=>c+'66';   // メンバーの色は不透明度40%で表示する
 const people=()=>(D.shop.members&&D.shop.members.length)?D.shop.members:PEOPLE;
 const colorOf=name=>{const i=D.shop.mcolors?.[name];return MCOL[(i??Math.max(0,people().indexOf(name)))%MCOL.length].c};
 const memberOfEmail=email=>email?people().find(n=>(D.shop.memails?.[n]||'').toLowerCase()===email.toLowerCase())||null:null;
+// プロジェクトの参加メンバー（決めていなければ全員）
+const partsOf=p=>{const P=people(),m=(p?.members||[]).filter(n=>P.includes(n));return m.length?m:P};
 const costCats=()=>(D.shop.costCats&&D.shop.costCats.length)?D.shop.costCats:CATS.cost;
 const IK={
   stock:{t:'在庫',qtyL:'在庫数',namePh:'例：コーヒー豆（ブラジル）',unitPh:'例：袋、kg、個'},
@@ -41,6 +43,8 @@ const $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const yen=n=>(n<0?'−':'')+'¥'+Math.abs(Math.round(n)).toLocaleString('ja-JP');
 const num=s=>{const v=Number(String(s??'').replace(/[０-９．]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[,，\s]/g,''));return Number.isFinite(v)?v:0};
+// 数の入力欄に入れる値（0 のときは空にする）
+const nv=v=>(+v?qf(v).replace(/,/g,''):'');
 const qf=n=>(Number(n)||0).toLocaleString('ja-JP',{maximumFractionDigits:2});
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const md=s=>{const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');return m?Number(m[2])+'/'+Number(m[3]):''};
@@ -68,6 +72,10 @@ const nkey=s=>String(s??'').normalize('NFKC').trim().replace(/\s+/g,' ').toLower
 const itemByName=(name,exceptId)=>D.items.find(i=>i.id!==exceptId&&nkey(i.name)===nkey(name));
 // コーヒー豆だけは kg で数える（品目に bean:true を持たせる）。名前に「豆」があれば最初から kg を選んでおく（豆乳などは除く）
 const guessBean=name=>/豆/.test(nkey(name))&&!/豆乳|豆腐|大豆|小豆/.test(nkey(name));
+// 在庫切れ：品目ごとに決めた数（alertAt）を下回ったら。決めていなければ 0 以下で
+const isLow=it=>it?.kind==='stock'&&((it.alertAt>0)?(it.qty||0)<it.alertAt:(it.qty||0)<=0);
+// 並び順：在庫・備品のページで並び替えた順（order）。決めていない品目は名前順で後ろに
+const byOrder=(a,b)=>((a.order??1e9)-(b.order??1e9))||(a.name||'').localeCompare(b.name||'','ja');
 const unitOf=it=>it?.kind==='gear'?'':it?.bean?'kg':(it?.unit||'');   // 備品は単位なし
 // プロジェクトで経費として買った数（品目ごと）
 const boughtOf=(pid,itemId)=>entriesOf(pid).filter(e=>e.itemId===itemId).reduce((a,e)=>a+(e.qty||0),0);
@@ -139,7 +147,7 @@ function setMenu(open){
 }
 function drawMenu(){
   $('#cP').textContent=D.projects.length+'件';
-  const st=D.items.filter(i=>i.kind==='stock'),out=st.filter(i=>(i.qty||0)<=0).length;
+  const st=D.items.filter(i=>i.kind==='stock'),out=st.filter(isLow).length;
   $('#cS').textContent=st.length+'品目'+(out?` / 在庫切れ ${out}`:'');
   $('#cG').textContent=D.items.filter(i=>i.kind==='gear').length+'点';
   $('#cShop').textContent=D.shop.name||'未登録';
@@ -178,7 +186,7 @@ function vNew(){return{title:'プロジェクト作成',html:`
   <div class="seg" id="ptype"><button type="button" data-v="event" aria-pressed="true">イベント</button><button type="button" data-v="shop" aria-pressed="false">店舗</button></div>
   <label class="l" for="pname" id="pnameL">イベント名</label>
   <input id="pname" maxlength="100">
-  <div id="pdateW" class="row2"><div><label class="l" for="pdate">開始日</label><input id="pdate" type="date"></div><div><label class="l" for="pend">終了日（1日だけなら同じ日）</label><input id="pend" type="date"></div></div>
+  <div id="pdateW" class="row2 dates"><div><label class="l" for="pdate">開始日</label><input id="pdate" type="date"></div><div><label class="l" for="pend">終了日（1日だけなら同じ日）</label><input id="pend" type="date"></div></div>
   <button class="go" type="submit">作成する</button>
 </form>`,
 init(){$('#pdate').value=today();$('#pend').value=today();setPType(ui.ptype)},
@@ -215,29 +223,62 @@ function drawIBean(){
   const bean=ui.iBean??guessBean($('#iname').value);
   for(const b of seg.querySelectorAll('button'))b.setAttribute('aria-pressed',String((b.dataset.b==='1')===bean));
   const u=$('#iunit');u.disabled=bean;if(bean)u.value='kg';else if(u.value==='kg')u.value='';
-  $('#iqty').placeholder=bean?'0.0':'0';
+  $('#iqty').placeholder='';
+}
+// 品目の編集欄（在庫は 名前・科目・数え方・単位、備品は 名前）
+function itemEditForm(i,kind){
+  const cats=costCats(),cur=itemCat(i.id),opts=[...cats,...(cur&&!cats.includes(cur)?[cur]:[])];
+  return `<div class="iedit">
+    <label class="l sm">名前</label><input class="ie-name" maxlength="60" value="${esc(i.name)}">
+    ${kind==='stock'?`<label class="l sm">科目</label><select class="ie-cat"><option value="">科目なし</option>${opts.map(c=>`<option${c===cur?' selected':''}>${esc(c)}</option>`).join('')}</select>
+    <div class="l sm">数え方</div><div class="seg small ie-bean"><button type="button" data-b="0" aria-pressed="${!i.bean}">個数</button><button type="button" data-b="1" aria-pressed="${!!i.bean}">kg（コーヒー豆）</button></div>
+    <label class="l sm">単位</label><input class="ie-unit" maxlength="10" value="${esc(i.bean?'kg':(i.unit||''))}"${i.bean?' disabled':''} placeholder="例：袋、個">
+    <label class="l sm">在庫切れの目安（この数を下回ったら知らせる。空欄なら 0 になったとき）</label><input class="ie-alert" inputmode="decimal" value="${i.alertAt>0?esc(qf(i.alertAt).replace(/,/g,'')):''}" placeholder="例：5">`:''}
+    <div class="ie-btns"><button type="button" class="qok" data-act="ie-save">保存</button><button type="button" class="ghost" data-act="ie-cancel">やめる</button></div>
+  </div>`;
+}
+// 在庫・備品の数の「確定前」の値（確定を押すまで保存しない）
+function setDraft(id,v){
+  const it=itemOf(id);if(!it)return;
+  v=Math.max(0,+(+v).toFixed(3));
+  if(v===+(it.qty||0))delete ui.qtyDraft[id];else ui.qtyDraft[id]=v;
+  V?.refresh?.();
 }
 function clearItemForm(){$('#iname').value='';$('#iqty').value='';const u=$('#iunit');if(u)u.value='';ui.iBean=null;drawIBean();$('#iname').focus()}
 // 在庫・備品（台帳）
 function vItems(kind){const k=IK[kind];return{title:k.t,html:`
 <form class="card" data-f="item" autocomplete="off">
   <label class="l" for="iname">名前</label><input id="iname" maxlength="60" placeholder="${k.namePh}">
+  ${kind==='stock'?`<label class="l" for="icat">科目</label><select id="icat"><option value="">科目なし</option>${costCats().map(c=>`<option>${esc(c)}</option>`).join('')}</select>`:''}
   ${kind==='stock'?`<div class="l">数え方</div><div class="seg small" id="iBean"><button type="button" data-b="0">個数</button><button type="button" data-b="1">kg（コーヒー豆）</button></div>`:''}
   ${kind==='stock'?`<div class="row2">
-    <div><label class="l" for="iqty">${k.qtyL}</label><input id="iqty" inputmode="decimal" placeholder="0"></div>
+    <div><label class="l" for="iqty">${k.qtyL}</label><input id="iqty" inputmode="decimal" placeholder=""></div>
     <div><label class="l" for="iunit">単位</label><input id="iunit" maxlength="10" placeholder="${k.unitPh}"></div>
-  </div>`:`<label class="l" for="iqty">${k.qtyL}</label><input id="iqty" inputmode="decimal" placeholder="0">`}
+  </div>`:`<label class="l" for="iqty">${k.qtyL}</label><input id="iqty" inputmode="decimal" placeholder="">`}
   <button class="go" type="submit">${k.t}に追加</button>
   <p class="fmsg" role="status"></p>
 </form>
-<p class="note">${kind==='stock'?'イベントの持ち物リストで「使った数」を入れると、ここの在庫数が自動で減ります。':'イベントの持ち物リストに入れて、積み込みのチェックに使えます。'}名前と数はその場で書き換えられます。消すときは行を長押しします。</p>
-<ul class="items" id="ilist"></ul>`,
-init(){ui.iBean=null;drawIBean()},
+<p class="note">${kind==='stock'?'集計のページで「使った数」を入れると、ここの在庫数が自動で減ります。':'イベントの持ち物リストに入れて、積み込みのチェックに使えます。'}名前・科目・数え方・単位は「編集」で直せます。数は変えたあと「確定」を押すと保存されます（押さずにページを移ると元に戻ります）。消すときは行を長押し、並び替えは右端の ≡ をドラッグします。</p>
+${kind==='stock'?'<p class="lowbox" id="lowBox" role="status" hidden></p>':''}
+<div id="ilist"></div>`,
+init(){ui.iBean=null;ui.qtyDraft={};ui.editItem=null;drawIBean()},   // ページを開き直したら、確定していない数は捨てる
 refresh(){
-  const list=D.items.filter(i=>i.kind===kind).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja'));
-  fill($('#ilist'),list.length?list.map(i=>`<li data-lp data-id="${esc(i.id)}" class="${kind==='stock'&&(i.qty||0)<=0?'out':''}">
-    <span class="nm" data-act="rename" title="タップで名前を直す / 長押しで削除">${esc(i.name)}</span>
-    <span class="qty"><button type="button" class="step" data-step="${i.bean?-0.1:-1}" aria-label="${i.bean?'0.1kg':'1つ'}減らす">−</button><input data-fld="qty" inputmode="decimal" value="${esc(qf(i.qty).replace(/,/g,''))}" aria-label="${k.qtyL}"><button type="button" class="step" data-step="${i.bean?0.1:1}" aria-label="${i.bean?'0.1kg':'1つ'}増やす">＋</button><span class="unit">${esc(unitOf(i))}</span></span></li>`).join(''):empty('まだ登録がありません'));
+  const list=D.items.filter(i=>i.kind===kind).sort(byOrder);
+  const dr=ui.qtyDraft||{};
+  if(kind==='stock'){const low=list.filter(isLow);$('#lowBox').innerHTML=low.length?`<b>在庫切れ</b>${low.map(i=>`${esc(i.name)}（${qf(i.qty)}${esc(unitOf(i))}${i.alertAt>0?` / ${qf(i.alertAt)}${esc(unitOf(i))}未満`:''}）`).join('、')}`:'';$('#lowBox').hidden=!low.length}
+  const row=i=>{const d=dr[i.id],v=d??(i.qty||0),cat=kind==='stock'?itemCat(i.id):'';return `<li data-lp data-id="${esc(i.id)}" class="${isLow(i)?'low':''}${d!=null?' dirty':''}">
+    <span class="nmw">${kind==='stock'?`<span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span>`:''}<span class="nm" data-act="iedit" title="タップで編集 / 長押しで削除">${esc(i.name)}</span><button type="button" class="ghost sm" data-act="iedit">編集</button></span>
+    ${ui.editItem===i.id?itemEditForm(i,kind):''}
+    <span class="qty"><button type="button" class="step" data-step="${i.bean?-0.1:-1}" aria-label="${i.bean?'0.1kg':'1つ'}減らす">−</button><input data-fld="qty" inputmode="decimal" value="${nv(v)}" aria-label="${k.qtyL}"><button type="button" class="step" data-step="${i.bean?0.1:1}" aria-label="${i.bean?'0.1kg':'1つ'}増やす">＋</button><span class="unit">${esc(unitOf(i))}</span>${d!=null?`<button type="button" class="qok" data-act="qok">確定</button>`:''}</span>
+    <span class="drag" aria-label="ドラッグで並び替え" title="ドラッグで並び替え"><i></i><i></i><i></i></span></li>`};
+  // 在庫は科目ごとにまとめて並べる（科目の順は屋号情報の順、科目なしは最後）。まとまりの中は並び替えた順
+  let html;
+  if(!list.length)html='<ul class="items">'+empty('まだ登録がありません')+'</ul>';
+  else if(kind==='stock'){
+    const g=new Map();for(const i of list){const c=itemCat(i.id)||'';if(!g.has(c))g.set(c,[]);g.get(c).push(i)}
+    html=[...g.keys()].sort((a,b)=>catRank(a)-catRank(b)).map(c=>`<h3 class="grp">${esc(c||'科目なし')}<span>${g.get(c).length}</span></h3><ul class="items">${g.get(c).map(row).join('')}</ul>`).join('');
+  }else html=`<ul class="items">${list.map(row).join('')}</ul>`;
+  fill($('#ilist'),html);
 },
 onSubmit(e){
   e.preventDefault();
@@ -253,23 +294,59 @@ onSubmit(e){
     toast(q?`「${same.name}」はもうあるので、数を${qf(q)}${unitOf(same)||unit}足しました`:`「${same.name}」はもう登録されています`);
     return;
   }
-  setDoc(doc(C.items),{kind,name,qty:q,unit,...(bean?{bean:true}:{}),createdAt:Date.now(),...stamp()}).catch(writeErr);
+  const cat=kind==='stock'?$('#icat').value:'';
+  setDoc(doc(C.items),{kind,name,qty:q,unit,...(kind==='stock'?{cat,catSet:true}:{}),...(bean?{bean:true}:{}),createdAt:Date.now(),...stamp()}).catch(writeErr);
   clearItemForm();
   toast('追加しました：'+name);
 },
-onInput(e){if(e.target.id==='iname')drawIBean()},
+onInput(e){
+  if(e.target.id==='iname'){drawIBean();return}
+  // 数を打ちはじめたら、その場で「確定」ボタンを出す（打っている欄はそのまま）
+  if(e.target.dataset.fld==='qty'){
+    const li=e.target.closest('li[data-id]'),id=li.dataset.id,it=itemOf(id);if(!it)return;
+    const v=Math.max(0,+num(e.target.value).toFixed(3)),changed=e.target.value.trim()!==''&&v!==+(it.qty||0);
+    if(changed)ui.qtyDraft[id]=v;else delete ui.qtyDraft[id];
+    li.classList.toggle('dirty',changed);
+    let ok=li.querySelector('.qok[data-act="qok"]');
+    if(changed&&!ok)li.querySelector('.qty').insertAdjacentHTML('beforeend','<button type="button" class="qok" data-act="qok">確定</button>');
+    if(!changed&&ok)ok.remove();
+  }
+},
 onClick(e){
   const ib=e.target.closest('#iBean button');if(ib){ui.iBean=ib.dataset.b==='1';drawIBean();return}
   const li=e.target.closest('li[data-id]');if(!li)return;const id=li.dataset.id;
-  const rn=e.target.closest('[data-act="rename"]');
-  if(rn){const inp=document.createElement('input');inp.className='nm';inp.dataset.fld='name';inp.maxLength=60;inp.value=itemOf(id)?.name||'';inp.setAttribute('aria-label','名前');rn.replaceWith(inp);inp.focus();inp.select();return}
+  // 品目の編集（名前・科目・数え方・単位）
+  if(e.target.closest('[data-act="iedit"]')){ui.editItem=ui.editItem===id?null:id;ui.eBean=null;this.refresh();const f=$$('#ilist li').find(x=>x.dataset.id===id)?.querySelector('.ie-name');if(f){f.focus();f.select()}return}
+  const eb=e.target.closest('.ie-bean button');if(eb){ui.eBean=eb.dataset.b==='1';for(const x of li.querySelectorAll('.ie-bean button'))x.setAttribute('aria-pressed',String(x===eb));const u=li.querySelector('.ie-unit');if(u){u.disabled=ui.eBean;if(ui.eBean)u.value='kg';else if(u.value==='kg')u.value=''}return}
+  if(e.target.closest('[data-act="ie-cancel"]')){ui.editItem=null;this.refresh();return}
+  if(e.target.closest('[data-act="ie-save"]')){
+    const it=itemOf(id);if(!it)return;
+    const name=li.querySelector('.ie-name').value.trim();
+    if(!name){toast('名前を入れてください',true);return}
+    const same=itemByName(name,id);if(same){toast(`「${same.name}」はもう${IK[same.kind].t}にあります`,true);return}
+    const body={name,...stamp()};
+    if(kind==='stock'){
+      const bean=ui.eBean??!!it.bean;
+      body.cat=li.querySelector('.ie-cat').value;body.catSet=true;body.bean=bean;body.unit=bean?'kg':li.querySelector('.ie-unit').value.trim();
+      body.alertAt=Math.max(0,num(li.querySelector('.ie-alert').value));
+    }
+    updateDoc(doc(C.items,id),body).catch(writeErr);
+    ui.editItem=null;toast('保存しました：'+name);this.refresh();return;
+  }
+  // 数は＋−や入力で変えても、「確定」を押すまで保存しない
   const s=e.target.closest('[data-step]');
-  if(s){updateDoc(doc(C.items,id),{qty:increment(Number(s.dataset.step)),...stamp()}).catch(writeErr);return}
+  if(s){const cur=ui.qtyDraft[id]??(itemOf(id)?.qty||0);setDraft(id,cur+Number(s.dataset.step));return}
+  if(e.target.closest('[data-act="qok"]')){
+    const v=ui.qtyDraft[id];if(v==null)return;delete ui.qtyDraft[id];
+    updateDoc(doc(C.items,id),{qty:v,...stamp()}).catch(writeErr);
+    const it2=itemOf(id);if(isLow({...it2,qty:v}))toast(`${it2.name}が在庫切れです（${qf(v)}${unitOf(it2)}）`,true);else toast(`${it2?.name||''}を${qf(v)}${unitOf(it2)}にしました`);this.refresh();return;
+  }
 },
 onLpDelete(li){const it=itemOf(li.dataset.id);if(!it)return;deleteDoc(doc(C.items,it.id)).catch(writeErr);toast('削除しました：'+it.name)},
 onChange(e){
   const li=e.target.closest('li[data-id]'),f=e.target.dataset.fld;if(!li||!f)return;
-  const v=f==='qty'?num(e.target.value):e.target.value.trim();
+  if(f==='qty'){const v=Math.max(0,+num(e.target.value).toFixed(3));if(ui.qtyDraft[li.dataset.id]===v)return;setDraft(li.dataset.id,v);return}   // 打った時点で確定ボタンは出ているので、描き直さない（確定ボタンの押し損じを防ぐ）
+  const v=e.target.value.trim();
   if(f==='name'&&!v){e.target.value=itemOf(li.dataset.id)?.name||'';return}
   if(f==='name'){const same=itemByName(v,li.dataset.id);if(same){toast(`「${same.name}」はもう${IK[same.kind].t}にあります`,true);e.target.value=itemOf(li.dataset.id)?.name||'';return}}
   updateDoc(doc(C.items,li.dataset.id),{[f]:v,...stamp()}).catch(writeErr);
@@ -354,7 +431,7 @@ refresh(){
   const es=entriesOf(id),t=totals(es);
   $('#hProfit').textContent=yen(t.p);$('#hSale').textContent=yen(t.s);$('#hCost').textContent=yen(t.c);
   $('#mDt').textContent=(p.type==='event'?'イベント':'店舗')+'詳細';
-  $('#mD').textContent=[p.place,p.fee?'出店料 '+yen(p.fee):''].filter(Boolean).join(' / ')||'場所 / 出店料 / URLなど';
+  $('#mD').textContent=[partsOf(p).length!==people().length?`参加 ${partsOf(p).length}人`:'',p.place,p.fee?'出店料 '+yen(p.fee):''].filter(Boolean).join(' / ')||'場所 / 出店料 / URLなど';
   const ps=packList(id).filter(x=>!x.off);$('#mK').textContent=ps.length?`${ps.length}点 / 積んだ ${ps.filter(x=>x.checked).length}`:'';
   $('#mM').textContent=es.length+'件の記録';
   const mv=moves(payRows(es));$('#mP').textContent=es.length?(mv.length?mv.length+'件の受け渡し':'精算の必要なし'):'記録がまだありません';
@@ -364,14 +441,15 @@ refresh(){
 function vDetail(){const id=R.id,p=proj(id),ev=p.type==='event';return{title:(ev?'イベント':'店舗')+'詳細',back:pBack(),html:`
 <form class="card" data-f="detail" data-noenter autocomplete="off">
   <label class="l" for="dName">${ev?'イベント名':'店舗名'}</label><input id="dName" maxlength="100">
-  ${ev?`<div class="row2"><div><label class="l" for="dDate">開始日</label><input id="dDate" type="date"></div><div><label class="l" for="dEnd">終了日（1日だけなら同じ日）</label><input id="dEnd" type="date"></div></div>`:''}
+  ${ev?`<div class="row2 dates"><div><label class="l" for="dDate">開始日</label><input id="dDate" type="date"></div><div><label class="l" for="dEnd">終了日（1日だけなら同じ日）</label><input id="dEnd" type="date"></div></div>`:''}
+  <div class="l">参加メンバー</div><div class="chips" id="dMem">${people().map(n=>`<button type="button" data-m="${esc(n)}" data-p style="--pc:${A40(colorOf(n))}" aria-pressed="${partsOf(p).includes(n)}">${esc(n)}</button>`).join('')}</div>
   <label class="l" for="dPlace">場所</label><input id="dPlace" maxlength="100" placeholder="例：〇〇公園 芝生広場">
   <div class="l">時間（一覧から選ぶか、数字で入力。例：830 → 8:30）</div>
   <div class="tgrid">
     <label for="dIn">搬入</label><span class="tmw"><input class="tm" id="dIn" inputmode="numeric" maxlength="5" placeholder="8:00" data-def="8:00"></span><span></span><span></span>
     <label for="dOpen">営業</label><span class="tmw"><input class="tm" id="dOpen" inputmode="numeric" maxlength="5" placeholder="10:00" data-def="10:00"></span><span class="tsep">〜</span><span class="tmw"><input class="tm" id="dClose" inputmode="numeric" maxlength="5" placeholder="16:00" data-def="16:00" aria-label="営業の終わり"></span>
   </div>
-  <label class="l" for="dFee">出店料</label><div class="amt"><span>¥</span><input id="dFee" inputmode="numeric" placeholder="0"></div>
+  <label class="l" for="dFee">出店料</label><div class="amt"><span>¥</span><input id="dFee" inputmode="numeric" placeholder=""></div>
   <div class="l">メニュー（品目と値段）</div>
   <div id="dMenu">${((p.menu||[]).length?p.menu:[{}]).map(menuRow).join('')}</div>
   <button type="button" class="ghost" data-act="addMenu">＋ メニューを追加</button>
@@ -402,9 +480,15 @@ onSubmit(e){
   const time=[tm.loadIn&&'搬入 '+tm.loadIn,(tm.open||tm.close)&&'営業 '+(tm.open||'')+'〜'+(tm.close||'')].filter(Boolean).join('／');
   const body={name,place:$('#dPlace').value.trim(),...tm,time,fee:num($('#dFee').value),url:$('#dUrl').value.trim(),memo:$('#dMemo').value.trim(),...stamp()};
   if(ev){body.date=$('#dDate').value||'';body.endDate=$('#dEnd').value||''}
+  body.members=$$('#dMem button[aria-pressed="true"]').map(b=>b.dataset.m);
+  if(!body.members.length){toast('参加メンバーを1人以上選んでください',true);return}
   body.menu=$$('#dMenu .mnrow').map(r=>({id:r.dataset.mid,name:r.querySelector('.mnn').value.trim(),price:num(r.querySelector('.mnp').value)})).filter(m=>m.name);
   // メニューの売上（値段×売上数）を、値段や名前の変更に合わせて直す。消したメニューの売上は消す
   const b=writeBatch(fs);
+  // 売上を持っている人が参加メンバーから外れたら、参加メンバーの人に付けかえる（メニューの売上も）
+  {const me=memberOfEmail(user?.email),nh=(p.salesHolder&&body.members.includes(p.salesHolder))?p.salesHolder:(me&&body.members.includes(me)?me:body.members[0]);
+   if(p.salesHolder&&p.salesHolder!==nh)body.salesHolder=nh;
+   for(const e of entriesOf(id).filter(x=>x.menuId&&!body.members.includes(x.person)))b.update(doc(C.entries,e.id),{person:nh,...stamp()});}
   b.update(doc(C.projects,id),body);
   for(const e of entriesOf(id).filter(x=>x.menuId)){
     const m=body.menu.find(x=>x.id===e.menuId);
@@ -419,6 +503,7 @@ onChange(e){
   if(e.target.classList.contains('tm')){const v=normTime(e.target.value);if(v===null)toast('時間は 8:00 のように入れてください',true);else e.target.value=v}
 },
 onClick(e){
+  const mb=e.target.closest('#dMem button');if(mb){mb.setAttribute('aria-pressed',String(mb.getAttribute('aria-pressed')!=='true'));return}
   if(e.target.closest('[data-act="addMenu"]')){$('#dMenu').insertAdjacentHTML('beforeend',menuRow({}));$('#dMenu .mnrow:last-child .mnn').focus();return}
   const a=e.target.closest('[data-act="delP"]');if(!a)return;
   sure(a,()=>{deleteProject(id);location.replace('#list')},'本当に削除（元に戻せません）');
@@ -426,10 +511,11 @@ onClick(e){
 
 // メニュー1行（イベント詳細）
 const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-const menuRow=m=>`<div class="mnrow" data-lp data-mid="${esc(m.id||newId())}"><span class="grip" aria-hidden="true">≡</span><input class="mnn" maxlength="40" placeholder="品目（例：ドリップコーヒー）" value="${esc(m.name)}" aria-label="品目"><div class="amt"><span>¥</span><input class="mnp" inputmode="numeric" placeholder="0" value="${m.price?Number(m.price).toLocaleString('ja-JP'):''}" aria-label="値段"></div></div>`;
+const menuRow=m=>`<div class="mnrow" data-lp data-mid="${esc(m.id||newId())}"><span class="grip" aria-hidden="true">≡</span><input class="mnn" maxlength="40" placeholder="品目（例：ドリップコーヒー）" value="${esc(m.name)}" aria-label="品目"><div class="amt"><span>¥</span><input class="mnp" inputmode="numeric" placeholder="" value="${m.price?Number(m.price).toLocaleString('ja-JP'):''}" aria-label="値段"></div></div>`;
 // メニューの売上（1メニュー＝1件の売上記録。id は「プロジェクトID_m_メニューID」）
 const menuEntry=(pid,mid)=>D.entries.find(e=>e.id===pid+'_m_'+mid);
-const holderOf=p=>(p?.salesHolder&&people().includes(p.salesHolder))?p.salesHolder:(memberOfEmail(user?.email)||people()[0]);
+// 売上を持っている人：そのプロジェクトの参加メンバーの中から（決めていなければ自分、いなければ1人目）
+const holderOf=p=>{const M=partsOf(p),me=memberOfEmail(user?.email);return(p?.salesHolder&&M.includes(p.salesHolder))?p.salesHolder:(me&&M.includes(me)?me:M[0])};
 function setVisitors(pid,n){n=Math.max(0,Math.round(n));updateDoc(doc(C.projects,pid),{visitors:n,...stamp()}).catch(writeErr)}
 function setMenuCount(pid,mid,n){
   const p=proj(pid),m=(p?.menu||[]).find(x=>x.id===mid);if(!m)return;
@@ -456,7 +542,7 @@ function packRow(pk){
   return `<li data-lp data-id="${esc(pk.id)}" class="${pk.checked?'done':''}">
     <label class="chk"><input type="checkbox" data-fld="checked"${pk.checked?' checked':''}><span class="nm">${esc(it?it.name:(pk.name||'（削除された品目）'))}</span></label>
     ${it?`<span class="stk">${st?'在庫':'登録'} ${qf(it.qty)}${u}</span>`:'<span></span>'}
-    <span class="meta">持っていく<span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${esc(qf(pk.take||0).replace(/,/g,''))}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}${st&&pk.used?`<i>/</i>使った <b>${qf(pk.used)}</b>${u}`:''}${bought?`<i>/</i>買った <b>${qf(bought)}</b>${u}`:''}${st&&(bought||pk.used)?`<i>/</i>残り <b>${qf(left)}</b>${u}`:''}</span>
+    <span class="meta">持っていく<span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${nv(pk.take)}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}${st&&pk.used?`<i>/</i>使った <b>${qf(pk.used)}</b>${u}`:''}${bought?`<i>/</i>買った <b>${qf(bought)}</b>${u}`:''}${st&&(bought||pk.used)?`<i>/</i>残り <b>${qf(left)}</b>${u}`:''}</span>
   </li>`;
 }
 // 持ち物リスト：在庫・備品の全品目を出す。まだ記録のない品目は仮の行（_v）で、数を入れたときに保存する
@@ -479,7 +565,7 @@ const setTake=(pk,v)=>{
   v=Math.max(0,v);const mx=takeMax(pk);
   if(v>mx){v=mx;toast(`${itemOf(pk.itemId)?.name||''}は${qf(mx)}${unitOf(itemOf(pk.itemId))}までです`,true)}
   const b=writeBatch(fs);putPk(b,pk,{take:+v.toFixed(3)});b.commit().catch(writeErr);
-  const inp=$$('#view .pk li').find(x=>x.dataset.id===pk.id)?.querySelector('[data-fld="take"]');if(inp)inp.value=qf(v).replace(/,/g,'');
+  const inp=$$('#view .pk li').find(x=>x.dataset.id===pk.id)?.querySelector('[data-fld="take"]');if(inp)inp.value=nv(v);
 };
 return{title:'在庫 / 備品',back:pBack(),html:`
 <div class="bar"><b id="prog"></b></div>
@@ -541,10 +627,11 @@ onChange(e){
 }}}
 
 // 使った数（集計のページで入れる）。変えた分だけ在庫の数を動かす
-// 品目の科目：経費で買ったときの科目（いちばん新しい記録）。なければ品目に覚えている科目
+// 品目の科目：品目に決めてある科目（在庫のページで編集できる）。なければ経費で買ったときの科目（いちばん新しい記録）
 function itemCat(itemId){
+  const it=itemOf(itemId);if(it&&it.cat!==undefined&&it.cat!==null&&(it.cat||it.catSet))return it.cat;
   const es=D.entries.filter(e=>e.itemId===itemId&&e.category).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-  return es[0]?.category||itemOf(itemId)?.cat||'';
+  return es[0]?.category||'';
 }
 // 科目の並び順（屋号情報の科目の順。科目なしは最後）
 const catRank=c=>{if(!c)return 999;const i=costCats().indexOf(c);return i<0?500:i};
@@ -568,6 +655,7 @@ function setUsed(pid,pkid,v){
   if(it)b.update(doc(C.items,it.id),{qty:increment(-delta),...stamp()});
   b.commit().catch(writeErr);
   if(over)toast(over+`（${qf(v)}${unitOf(it)}にしました）`,true);
+  else if(it&&delta>0&&isLow({...it,qty:(it.qty||0)-delta}))toast(`${it.name}が在庫切れです（残り${qf((it.qty||0)-delta)}${unitOf(it)}）`,true);
   else if(it)toast(`${it.name}：在庫を${qf(Math.abs(delta))}${unitOf(it)}${delta>0?'減らしました':'戻しました'}`);
 }
 // 経費・トランザクション・集計
@@ -589,13 +677,14 @@ function drawBuy(){
   $('#bDest').hidden=!name;
   $('#bDestL').textContent=it?`${IK[it.kind].t}に同じ名前があるので、数量を足します`:(dest?`${IK[dest].t}に新しく追加します（もう一度押すと取り消し）`:'在庫 / 備品にない品目です。追加するなら押してください（押さなければ経費の記録だけ）');
   for(const b of $$('#bKind button')){b.setAttribute('aria-pressed',String(b.dataset.d===dest));b.disabled=!!it}
+  $('#bQtyW').hidden=!name||!dest;
   $('#bHow').hidden=!name||!!it||!dest;$('#bBeanW').hidden=dest!=='stock';
   for(const b of $$('#bBean button'))b.setAttribute('aria-pressed',String((b.dataset.b==='1')===bean));
-  $('#bUnitIn').hidden=bean||dest==='gear';
-  $('#bUnit').textContent=it?unitOf(it):dest?(bean?'kg':$('#bUnitIn').value.trim()):'';
-  $('#bQty').placeholder=bean?'0.0':'0';
+  $('#bUnit').textContent=it?unitOf(it):dest&&bean?'kg':'';
+  $('#bQty').placeholder='';
 }
-function drawPeople(){$('#people').innerHTML=people().map(p=>`<button type="button" data-p="${esc(p)}" style="--pc:${A40(colorOf(p))}" aria-pressed="${p===ui.person}">${esc(p)}</button>`).join('')}
+// 経費の「払った人」：そのプロジェクトの参加メンバーだけ（前に記録した人を直すときは、その人も出す）
+function drawPeople(){const M=partsOf(proj(R.id));if(ui.person&&!M.includes(ui.person)&&!ui.editId)ui.person=null;$('#people').innerHTML=[...M,...(ui.editId&&ui.person&&!M.includes(ui.person)?[ui.person]:[])].map(p=>`<button type="button" data-p="${esc(p)}" style="--pc:${A40(colorOf(p))}" aria-pressed="${p===ui.person}">${esc(p)}</button>`).join('')}
 // 経費 / トランザクション / 集計 を、指で左右にスワイプして切り替える（指に合わせて引っぱられるように動く）
 const MTABS=['in','log','sum'];
 function mSwipe(){
@@ -644,7 +733,7 @@ function mSwipe(){
   box.addEventListener('touchend',end);box.addEventListener('touchcancel',end);
 }
 function mTab(t){ui.mtab=t;for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===t));for(const s of ['in','log','sum'])$('#m-'+s).hidden=s!==t;for(const ta of $$('#view .memo-ta'))growMemo(ta)}
-function resetEntry(){ui.editId=null;ui.bBean=null;ui.bDest=null;$('#bItem').value='';$('#bQty').value='';$('#bUnitIn').value='';drawBuy();$('#amount').value='';$('#memo').value='';growMemo($('#memo'));$('#save').textContent='記録する';$('#cancelWrap').hidden=true}
+function resetEntry(){ui.editId=null;ui.bBean=null;ui.bDest=null;$('#bItem').value='';$('#bQty').value='';drawBuy();$('#amount').value='';$('#memo').value='';growMemo($('#memo'));$('#eurl').value='';$('#save').textContent='記録する';$('#cancelWrap').hidden=true}
 function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トランザクション / 集計',back:pBack(),html:`
 <div class="tabs" id="mtab" role="tablist"><button type="button" role="tab" data-t="in">経費</button><button type="button" role="tab" data-t="log">トランザクション</button><button type="button" role="tab" data-t="sum">集計</button></div>
 <div class="mswipe" id="mswipe">
@@ -652,25 +741,24 @@ function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トラン�
   <form class="card" data-f="entry" autocomplete="off">
     <div class="l" style="margin-top:0">科目</div><div class="chips" id="cats"></div>
     <div id="buyBox">
-      <div class="row2">
-        <div><label class="l" for="bItem">品目</label><input id="bItem" list="bList" maxlength="60" placeholder="例：コーヒー豆、紙カップ"><datalist id="bList"></datalist></div>
-        <div><label class="l" for="bQty">数量</label><div class="qin"><input id="bQty" inputmode="decimal" placeholder="0"><span id="bUnit"></span></div></div>
-      </div>
+      <label class="l" for="bItem">品目</label><input id="bItem" list="bList" maxlength="60" placeholder="例：コーヒー豆、紙カップ"><datalist id="bList"></datalist>
       <div id="bDest" hidden>
         <div class="l sm" id="bDestL">反映先</div>
         <div class="seg small" id="bKind"><button type="button" data-d="stock">在庫</button><button type="button" data-d="gear">備品</button></div>
       </div>
+      <!-- 在庫か備品に反映するときだけ、数量などを出す -->
+      <div id="bQtyW" hidden><label class="l sm" for="bQty">数量</label><div class="qin"><input id="bQty" inputmode="decimal" placeholder=""><span id="bUnit"></span></div></div>
       <div id="bHow" hidden>
         <div id="bBeanW"><div class="l sm">数え方</div>
         <div class="seg small" id="bBean"><button type="button" data-b="0">個数</button><button type="button" data-b="1">kg（コーヒー豆）</button></div></div>
-        <input id="bUnitIn" maxlength="10" placeholder="単位（例：個、袋、本）" style="margin-top:8px">
       </div>
     </div>
     <label class="l" for="amount">金額</label>
-    <div class="amt"><span>¥</span><input id="amount" inputmode="numeric" placeholder="0"></div>
+    <div class="amt big"><span>¥</span><input id="amount" inputmode="numeric" placeholder=""></div>
     <div class="chips" id="people" style="margin-top:16px" aria-label="払った人"></div>
     <label class="l" for="date">日付</label><input id="date" type="date">
     <label class="l" for="memo">メモ</label><div class="memow"><textarea id="memo" class="memo-ta" rows="1" placeholder="例：ドリップ 20杯分"></textarea><button type="button" class="memo-ok" aria-label="メモの入力を確定">✓</button></div>
+    <label class="l" for="eurl">URL（1つまで）</label><input id="eurl" type="url" inputmode="url" maxlength="500" placeholder="https://（レシートや注文ページなど）">
     <button class="go" id="save" type="submit">記録する</button>
     <p class="fmsg" role="status"></p>
     <div style="text-align:center;margin-top:10px" id="cancelWrap" hidden><button type="button" class="ghost" data-act="cancel">編集をやめる</button></div>
@@ -681,7 +769,7 @@ function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トラン�
 <section id="m-log" hidden>
   <div class="card vis">
     <label for="visitors"><b>来客数</b></label>
-    <span class="qty"><button type="button" class="step" data-vstep="-1" aria-label="1人減らす">−</button><input id="visitors" inputmode="numeric" placeholder="0"><button type="button" class="step" data-vstep="1" aria-label="1人増やす">＋</button><span class="unit">人</span></span>
+    <span class="qty"><button type="button" class="step" data-vstep="-1" aria-label="1人減らす">−</button><input id="visitors" inputmode="numeric" placeholder=""><button type="button" class="step" data-vstep="1" aria-label="1人増やす">＋</button><span class="unit">人</span></span>
   </div>
   <div class="card ms">
     <div class="bar" style="margin:0 0 6px"><b>売上</b><b class="s" id="msTotal"></b></div>
@@ -717,17 +805,17 @@ refresh(){
   {const v=$('#visitors');if(document.activeElement!==v)v.value=p?.visitors?String(p.visitors):''}
   fill($('#msRows'),menu.length?menu.map(m=>{const e=menuEntry(id,m.id),n=e?.count||0;return `<div class="msr" data-mid="${esc(m.id)}">
     <span class="nm">${esc(m.name)}<span class="meta">${m.price?yen(m.price):'値段未設定'}</span></span>
-    <span class="qty"><button type="button" class="step" data-mstep="-1" aria-label="1つ減らす">−</button><input data-fld="cnt" inputmode="numeric" value="${n}" aria-label="${esc(m.name)}の売上数"><button type="button" class="step" data-mstep="1" aria-label="1つ増やす">＋</button></span>
+    <span class="qty"><button type="button" class="step" data-mstep="-1" aria-label="1つ減らす">−</button><input data-fld="cnt" inputmode="numeric" value="${nv(n)}" aria-label="${esc(m.name)}の売上数"><button type="button" class="step" data-mstep="1" aria-label="1つ増やす">＋</button></span>
     <b class="sub">${yen((m.price||0)*n)}</b></div>`}).join(''):'<p class="note" style="margin:0">イベント詳細でメニュー（品目と値段）を登録すると、ここで売上数を入れられます。</p>');
   $('#msTotal').textContent=menu.length?yen(list.filter(e=>e.menuId).reduce((a,e)=>a+(e.amount||0),0)):'';
   $('#msHold').hidden=!menu.length;
   const h=holderOf(p);
-  $('#holder').innerHTML=people().map(n=>`<button type="button" data-h="${esc(n)}" style="--pc:${A40(colorOf(n))}" data-p aria-pressed="${n===h}">${esc(n)}</button>`).join('');
+  $('#holder').innerHTML=partsOf(p).map(n=>`<button type="button" data-h="${esc(n)}" style="--pc:${A40(colorOf(n))}" data-p aria-pressed="${n===h}">${esc(n)}</button>`).join('');
   $('#list').innerHTML=sorted.length?sorted.map(entryRow).join(''):empty('まだ記録がありません。「経費」から最初の1件を記録しましょう。');
   // 経費タブの下：記録した順に下へ足していく
   const costs=list.filter(e=>e.kind==='cost').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
   $('#cCount').textContent=costs.length?`${costs.length}件 / ${yen(costs.reduce((a,e)=>a+(e.amount||0),0))}`:'';
-  $('#clist').innerHTML=costs.length?costs.map(entryRow).join(''):empty('まだ経費の記録がありません');
+  $('#clist').innerHTML=costs.length?costs.map(costCard).join(''):empty('まだ経費の記録がありません');
   $('#bList').innerHTML=[...D.items].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja')).map(i=>`<option value="${esc(i.name)}">${i.kind==='gear'?'備品':'在庫'} ${qf(i.qty)}${esc(unitOf(i))}</option>`).join('');
   const t=totals(list);
   // 使った数（持ち物リストに入れた在庫）
@@ -738,7 +826,7 @@ refresh(){
    fill($('#usedRows'),rows.length?rows.map(pk=>{const it=itemOf(pk.itemId),u=esc(unitOf(it)),bt=boughtOf(id,pk.itemId),left=(pk.take||0)+bt-(pk.used||0),st=it.bean?0.1:1;
      const cat=itemCat(pk.itemId);
      return `<div class="ur" data-pk="${esc(pk.id)}"><span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span><span class="nm">${esc(it.name)}<span class="meta">持っていく ${qf(pk.take||0)}${u}${bt?` / 買った ${qf(bt)}${u}`:''} / 残り <b class="${left<0?'c':''}">${qf(left)}</b>${u}</span></span>
-       <span class="qty"><button type="button" class="step" data-ustep="${-st}" aria-label="減らす">−</button><input data-fld="used" inputmode="decimal" value="${esc(qf(pk.used||0).replace(/,/g,''))}" aria-label="${esc(it.name)}の使った数"><button type="button" class="step" data-ustep="${st}" aria-label="増やす">＋</button><span class="unit">${u}</span></span></div>`}).join(''):'<p class="note" style="margin:0">在庫に品目を登録すると、ここで使った数を入れられます。</p>')}
+       <span class="qty"><button type="button" class="step" data-ustep="${-st}" aria-label="減らす">−</button><input data-fld="used" inputmode="decimal" value="${nv(pk.used)}" aria-label="${esc(it.name)}の使った数"><button type="button" class="step" data-ustep="${st}" aria-label="増やす">＋</button><span class="unit">${u}</span></span></div>`}).join(''):'<p class="note" style="margin:0">在庫に品目を登録すると、ここで使った数を入れられます。</p>')}
   $('#sS').textContent=yen(t.s);$('#sC').textContent=yen(t.c);$('#sP').textContent=yen(t.p);
   const bars=(kind,cls)=>{const r=[...new Set([...(kind==='cost'?costCats():CATS.sale),...list.filter(e=>e.kind===kind).map(e=>e.category)])].map(c=>({c,v:list.filter(e=>e.kind===kind&&e.category===c).reduce((a,e)=>a+(e.amount||0),0)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);const mx=Math.max(1,...r.map(x=>x.v));
     return r.length?r.map(x=>`<div class="cat"><span>${esc(x.c)}</span><span class="track"><span class="fill ${cls}" style="width:${(x.v/mx*100).toFixed(1)}%"></span></span><b>${yen(x.v)}</b></div>`).join(''):`<p class="empty">${kind==='sale'?'売上':'経費'}の記録がありません</p>`};
@@ -767,7 +855,7 @@ onClick(e){
   if(e.target.closest('[data-edit]')&&it.kind==='cost'){
     ui.editId=it.id;ui.cat=it.category;ui.person=it.person;drawKind();drawPeople();
     $('#bItem').value=it.itemId?(itemOf(it.itemId)?.name||it.itemName||''):(it.itemName||'');$('#bQty').value=it.qty?String(it.qty):'';ui.bBean=null;ui.bDest=null;drawBuy();
-    $('#amount').value=Number(it.amount||0).toLocaleString('ja-JP');$('#date').value=it.date||today();$('#memo').value=it.memo||'';growMemo($('#memo'));
+    $('#amount').value=Number(it.amount||0).toLocaleString('ja-JP');$('#eurl').value=it.url||'';$('#date').value=it.date||today();$('#memo').value=it.memo||'';growMemo($('#memo'));
     $('#save').textContent='この内容で更新';$('#cancelWrap').hidden=false;mTab('in');$('#mtab').scrollIntoView({block:'start'});
   }
 },
@@ -786,7 +874,7 @@ onChange(e){
   if(e.target.dataset.fld==='cnt'){const r=e.target.closest('.msr');setMenuCount(id,r.dataset.mid,num(e.target.value))}
 },
 onInput(e){
-  if(e.target.id==='bItem'||e.target.id==='bUnitIn'){drawBuy();return}if(e.target.id==='amount'){const d=e.target.value.replace(/[^\d]/g,'');e.target.value=d?Number(d).toLocaleString('ja-JP'):''}},
+  if(e.target.id==='bItem'){drawBuy();return}if(e.target.id==='amount'){const d=e.target.value.replace(/[^\d]/g,'');e.target.value=d?Number(d).toLocaleString('ja-JP'):''}},
 onSubmit(e){
   e.preventDefault();
   const amount=num($('#amount').value);
@@ -800,10 +888,10 @@ onSubmit(e){
     if(name&&(itemByName(name)||ui.bDest)){
       if(!(q>0)){toast('数量を入れてください',true);$('#bQty').focus();return}
       buy={name,q};
-    }else if(name)note={name,q};
+    }else if(name)note={name,q:0};   // 在庫 / 備品に反映しないときは数量なし
   }
   const old=ui.editId?D.entries.find(x=>x.id===ui.editId):null;
-  const body={projectId:id,date:$('#date').value||today(),kind:ui.kind,category:ui.cat,amount,person:ui.person,memo:$('#memo').value.trim(),createdAt:old?.createdAt||Date.now(),...stamp()};
+  const body={projectId:id,date:$('#date').value||today(),kind:ui.kind,category:ui.cat,amount,person:ui.person,memo:$('#memo').value.trim(),url:$('#eurl').value.trim(),createdAt:old?.createdAt||Date.now(),...stamp()};
   const b=writeBatch(fs),now=Date.now();
   let it=null;
   if(buy){
@@ -811,7 +899,7 @@ onSubmit(e){
     if(!it){
       // 同じ名前の品目がなければ、押した方（在庫／備品）に新しく作る
       const kind=buyDest(null),bean=kind==='stock'&&(ui.bBean??guessBean(buy.name)),ref=doc(C.items);
-      it={id:ref.id,kind,name:buy.name,bean,unit:kind==='gear'?'':bean?'kg':$('#bUnitIn').value.trim(),qty:0,_new:true};
+      it={id:ref.id,kind,name:buy.name,bean,unit:kind==='stock'&&bean?'kg':'',qty:0,_new:true};   // 単位は在庫のページの「編集」で決める
       b.set(ref,{kind:it.kind,name:it.name,unit:it.unit,cat:ui.cat,...(bean?{bean:true}:{}),qty:0,createdAt:now,...stamp()});
     }
     Object.assign(body,{itemId:it.id,itemName:it.name,qty:buy.q,unit:unitOf(it)});
@@ -838,7 +926,15 @@ function entryRow(e){
     <span class="money ${e.kind==='sale'?'s':'c'}">${e.kind==='sale'?'+':'−'}${yen(e.amount).replace('−','')}</span>
     <span class="meta">${md(e.date)}${e.menuId?` / ${yen(e.unitPrice||0)} × ${e.count||0}`:''}${nm?` / ${esc(nm)}${e.qty?' '+qf(e.qty)+esc(u):''}${e.itemId?`（${IK[itemOf(e.itemId)?.kind||'stock'].t}）`:''}`:''}${e._pending?' / 未送信':''}</span>
     <span class="ops">${e.kind==='cost'?'<button type="button" class="ghost" data-edit>編集</button>':''}</span>
-    ${e.memo?`<span class="memo">${esc(e.memo)}</span>`:''}</li>`;
+    ${e.memo?`<span class="memo">${esc(e.memo)}</span>`:''}${e.url?`<a class="elink" href="${esc(safeUrl(e.url))}" target="_blank" rel="noopener">${esc(e.url.replace(/^https?:\/\//,''))}</a>`:''}</li>`;
+}
+// 経費タブの「記録した経費」：1件ずつ枠で囲み、品名 → 日付 → 購入者 の順に出す
+function costCard(e){
+  const it=e.itemId?itemOf(e.itemId):null,nm=it?.name||e.itemName||'',u=e.itemId?(unitOf(it)||e.unit||''):'';
+  return `<li class="ccard" data-lp data-id="${esc(e.id)}">
+    <span class="ctop"><span class="ccat">${esc(e.category)}</span><b class="cname">${esc(nm||e.category)}${e.qty?`<span class="cqty">${qf(e.qty)}${esc(u)}</span>`:''}</b><span class="money c">−${yen(e.amount).replace('−','')}</span></span>
+    <span class="cmeta"><span>${md(e.date)||'日付なし'}</span><i>/</i><span>${esc(e.person||'')}</span>${e.itemId?`<i>/</i><span>${IK[it?.kind||'stock'].t}に反映</span>`:''}${e._pending?'<i>/</i><span>未送信</span>':''}<button type="button" class="ghost sm" data-edit>編集</button></span>
+    ${e.memo?`<span class="memo">${esc(e.memo)}</span>`:''}${e.url?`<a class="elink" href="${esc(safeUrl(e.url))}" target="_blank" rel="noopener">${esc(e.url.replace(/^https?:\/\//,''))}</a>`:''}</li>`;
 }
 async function copyCsv(btn,list){
   const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"',p=proj(R.id);
@@ -848,10 +944,13 @@ async function copyCsv(btn,list){
 }
 
 // 精算
-function payRows(list){
-  const P=people(),t=totals(list),share=t.p/P.length;
-  return P.map(p=>{const mine=list.filter(e=>e.person===p);const paid=mine.filter(e=>e.kind==='cost').reduce((a,e)=>a+(e.amount||0),0);const held=mine.filter(e=>e.kind==='sale').reduce((a,e)=>a+(e.amount||0),0);return{p,paid,held,bal:share-(held-paid)}});
+// 精算：参加メンバーだけで計算する（参加していない人の記録は、精算にはまったく含めない）
+function payRows(list,p){
+  const M=partsOf(p);list=list.filter(e=>M.includes(e.person));
+  const t=totals(list),share=t.p/M.length;
+  return M.map(n=>{const r=payRow(list,n);r.bal=share-(r.held-r.paid);return r});
 }
+function payRow(list,p){const mine=list.filter(e=>e.person===p);return{p,paid:mine.filter(e=>e.kind==='cost').reduce((a,e)=>a+(e.amount||0),0),held:mine.filter(e=>e.kind==='sale').reduce((a,e)=>a+(e.amount||0),0)}}
 function moves(rows){
   const pos=rows.map(r=>({p:r.p,v:Math.round(r.bal)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
   const neg=rows.map(r=>({p:r.p,v:Math.round(r.bal)})).filter(x=>x.v<0).sort((a,b)=>a.v-b.v);
@@ -861,11 +960,13 @@ function moves(rows){
 }
 function vPay(){const id=R.id;return{title:'精算',back:pBack(),html:`
 <h2>だれがだれに渡すか</h2><ul class="pay" id="moves"></ul>
-<h2>${people().length}人の内訳</h2>
+<h2>${partsOf(proj(id)).length}人の内訳</h2>
 <div class="scroll"><table><thead><tr><th>メンバー</th><th>立て替えた経費</th><th>手元の売上</th><th>精算額</th></tr></thead><tbody id="payRows"></tbody></table></div>
-<p class="note">このプロジェクトの利益を${people().length}人で同じ額に分ける計算です。精算額がプラスの人は受け取り、マイナスの人は渡します。</p>`,
+<p class="note">このプロジェクトの利益を参加メンバー（${partsOf(proj(id)).map(esc).join(' / ')}）で同じ額に分ける計算です。参加メンバーはイベント詳細で選べます。精算額がプラスの人は受け取り、マイナスの人は渡します。</p>
+<p class="note" id="payEx"></p>`,
 refresh(){
-  const list=entriesOf(id),rows=payRows(list),mv=moves(rows);
+  const all=entriesOf(id),M=partsOf(proj(id)),list=all.filter(e=>M.includes(e.person)),rows=payRows(list,proj(id)),mv=moves(rows),ex=all.length-list.length;
+  $('#payEx').textContent=ex?`参加していない人の記録 ${ex}件（${yen(all.filter(e=>!M.includes(e.person)).reduce((a,e)=>a+(e.kind==='sale'?1:-1)*(e.amount||0),0))}）は、精算に含めていません。`:'';
   $('#payRows').innerHTML=rows.map(r=>`<tr><td>${esc(r.p)}</td><td>${yen(r.paid)}</td><td>${yen(r.held)}</td><td class="${r.bal>=0?'s':'c'}"><b>${r.bal>=0?'+':''}${yen(r.bal)}</b></td></tr>`).join('');
   $('#moves').innerHTML=list.length?(mv.length?mv.map(m=>`<li>${esc(m[0])} → ${esc(m[1])}<b>${yen(m[2])}</b></li>`).join(''):'<li>精算の必要はありません</li>'):'<li>記録がまだありません</li>';
 }}}
@@ -995,6 +1096,43 @@ window.addEventListener('resize',presDraw);
 // 送信ボタン（type=submit）と入力欄での Enter は、ブラウザの「フォーム送信」に頼らず自分で処理する
 // （フォーム送信が止められている画面＝埋め込み表示などでも、ボタンが効くように）
 function submitForm(form){if(form&&V&&V.onSubmit)V.onSubmit({target:form,currentTarget:form,preventDefault(){}})}
+// ===== 日付の欄（PC）：押すと自前のカレンダー（日曜はじまり）が開く（キーボードで打つこともできる）。iPhone などはそのまま本体の日付選び =====
+const pad2=n=>String(n).padStart(2,'0');
+const ymdStr=d=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+function calClose(){for(const x of $$('.calpop'))x.remove()}
+function calDraw(pop,el){
+  const [y,m]=pop.dataset.ym.split('-').map(Number),first=new Date(y,m-1,1),start=first.getDay(),days=new Date(y,m,0).getDate();
+  const sel=el.value,td=ymdStr(new Date());
+  let cells='';for(let i=0;i<start;i++)cells+='<span></span>';
+  for(let d=1;d<=days;d++){const v=`${y}-${pad2(m)}-${pad2(d)}`,w=(start+d-1)%7;cells+=`<button type="button" tabindex="-1" data-d="${v}" class="${v===sel?'sel':''}${v===td?' td':''}${w===6?' sat':''}${w===0?' sun':''}">${d}</button>`}
+  pop.innerHTML=`<div class="calh"><button type="button" tabindex="-1" data-mv="-1" aria-label="前の月">‹</button><b>${y}年${m}月</b><button type="button" tabindex="-1" data-mv="1" aria-label="次の月">›</button></div>
+    <div class="calw">${['日','月','火','水','木','金','土'].map(x=>`<span>${x}</span>`).join('')}</div><div class="calg">${cells}</div>
+    <div class="calf"><button type="button" tabindex="-1" data-d="${td}">今日</button>${el.value?'<button type="button" tabindex="-1" data-d="">消す</button>':''}</div>`;
+}
+function calOpen(el){
+  if(TOUCH.matches||el.parentElement.querySelector('.calpop'))return;
+  calClose();
+  const pop=document.createElement('div');pop.className='calpop';
+  const base=el.value||(el.id==='dEnd'&&$('#dDate')?.value)||(el.id==='pend'&&$('#pdate')?.value)||ymdStr(new Date());
+  pop.dataset.ym=base.slice(0,7);
+  el.parentElement.style.position='relative';el.parentElement.appendChild(pop);calDraw(pop,el);
+}
+$('#view').addEventListener('mousedown',e=>{
+  if(e.target.closest('.calpop')){e.preventDefault();return}   // 押しても欄から外れないように
+  const d=e.target.closest('input[type=date]');if(d)calOpen(d);
+});
+$('#view').addEventListener('click',e=>{
+  const pop=e.target.closest('.calpop');if(!pop)return;
+  const el=pop.parentElement.querySelector('input[type=date]');
+  const mv=e.target.closest('[data-mv]');
+  if(mv){const [y,m]=pop.dataset.ym.split('-').map(Number),d=new Date(y,m-1+Number(mv.dataset.mv),1);pop.dataset.ym=d.getFullYear()+'-'+pad2(d.getMonth()+1);calDraw(pop,el);return}
+  const b=e.target.closest('[data-d]');
+  if(b){el.value=b.dataset.d;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));calClose();el.blur()}
+},true);
+$('#view').addEventListener('focusin',e=>{if(e.target.matches?.('input[type=date]'))calOpen(e.target)});
+$('#view').addEventListener('focusout',()=>setTimeout(()=>{if(!document.activeElement?.matches?.('input[type=date]'))calClose()},150));
+$('#view').addEventListener('keydown',e=>{if(e.key==='Escape')calClose()});
+document.addEventListener('mousedown',e=>{if(!e.target.closest('.calpop,input[type=date]'))calClose()});
 // ===== 時間の選択（一覧をスクロールして選ぶ／数字で入力もできる） =====
 const TIMES=[];for(let h=0;h<24;h++)for(const m of ['00','15','30','45'])TIMES.push(h+':'+m);
 const tmMin=s=>{const [a,b]=s.split(':');return +a*60+ +b};
@@ -1020,6 +1158,47 @@ $('#view').addEventListener('click',e=>{
 $('#view').addEventListener('focusout',()=>setTimeout(()=>{if(!document.activeElement?.closest?.('.tmw'))tmClose()},150));
 $('#view').addEventListener('keydown',e=>{if(e.key==='Escape')tmClose()});
 
+// 品目の編集欄：欄の外を押したら、保存せずに閉じる
+document.addEventListener('pointerdown',e=>{
+  if(!ui.editItem||!$('#view .iedit'))return;
+  if(e.target.closest('.iedit,[data-act="iedit"],.lpbar'))return;
+  ui.editItem=null;V?.refresh?.();
+},true);
+// ===== 並び替え（在庫・備品）：右端の ≡ をドラッグ =====
+let drg=null;
+$('#view').addEventListener('pointerdown',e=>{
+  const h=e.target.closest('.items .drag');if(!h)return;
+  e.preventDefault();
+  const li=h.closest('li'),rows=[...li.parentElement.children].filter(x=>x.dataset.id);
+  drg={li,rows,idx:rows.indexOf(li),to:rows.indexOf(li),y0:e.clientY,s0:window.scrollY,h:li.offsetHeight,mids:rows.map(x=>{const b=x.getBoundingClientRect();return b.top+window.scrollY+b.height/2}),pid:e.pointerId,h0:h};
+  try{h.setPointerCapture(e.pointerId)}catch(err){}
+  li.classList.add('dragging');
+  for(const r of rows)if(r!==li)r.style.transition='transform .18s ease';
+});
+function drgMove(cy){
+  if(!drg)return;
+  const dy=cy-drg.y0+(window.scrollY-drg.s0),c=drg.mids[drg.idx]+dy;
+  drg.li.style.transform=`translateY(${dy}px)`;
+  let to=0;drg.mids.forEach((m,j)=>{if(j!==drg.idx&&m<c)to++});drg.to=to;
+  drg.rows.forEach((r,j)=>{if(r===drg.li)return;let t=0;if(drg.idx<to&&j>drg.idx&&j<=to)t=-drg.h;if(to<drg.idx&&j>=to&&j<drg.idx)t=drg.h;r.style.transform=t?`translateY(${t}px)`:''});
+}
+document.addEventListener('pointermove',e=>{
+  if(!drg||e.pointerId!==drg.pid)return;
+  drgMove(e.clientY);
+  // 画面の端に近づいたら少しずつスクロール
+  const H=innerHeight;if(e.clientY<70)scrollBy(0,-10);else if(e.clientY>H-70)scrollBy(0,10);
+});
+function drgEnd(e){
+  if(!drg||(e&&e.pointerId!==drg.pid))return;
+  const {rows,idx,to,li}=drg;drg=null;
+  const ids=rows.map(r=>r.dataset.id);const [m]=ids.splice(idx,1);ids.splice(to,0,m);
+  for(const r of rows){r.style.transform='';r.style.transition=''}li.classList.remove('dragging');
+  if(to===idx)return;
+  const b=writeBatch(fs);ids.forEach((id,i)=>{const it=itemOf(id);if(it&&it.order!==i*10)b.update(doc(C.items,id),{order:i*10,...stamp()})});b.commit().catch(writeErr);
+  V?.refresh?.();
+}
+document.addEventListener('pointerup',drgEnd);document.addEventListener('pointercancel',drgEnd);
+
 // ===== 長押しで削除 =====
 // data-lp の付いた行を 0.5 秒ほど押し続けると「削除／やめる」が出る（入力欄やボタンの上からは始めない）
 let lp=null,lpAt=0;
@@ -1028,7 +1207,7 @@ function lpCancel(){if(lp){clearTimeout(lp.t);lp.el.classList.remove('lp-press')
 $('#view').addEventListener('pointerdown',e=>{
   if(e.button>0)return;
   let el=e.target.closest('[data-lp]');
-  if(!el||e.target.closest('input,select,textarea,button,.lpbar'))return;
+  if(!el||e.target.closest('input,select,textarea,button,.lpbar,.drag'))return;
   lpCancel();
   el.classList.add('lp-press');
   lp={el,x:e.clientX,y:e.clientY,t:setTimeout(()=>{

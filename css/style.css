@@ -128,8 +128,10 @@ label.l,.l{display:block;font-size:14px;font-weight:500;color:var(--sub);margin:
 .chips button[data-p][aria-pressed=true]{background:var(--pc,var(--roast));border-color:var(--pc,var(--roast));color:var(--ink)}
 input,select,textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;width:100%}
 textarea{resize:vertical}
-#amount{font-size:28px;font-weight:700;padding:8px 12px 8px 40px;font-variant-numeric:tabular-nums}
-.amt{position:relative}.amt span{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:20px;color:var(--sub)}.amt input{padding-left:40px}
+#amount{font-size:20px;font-weight:700;padding:8px 12px 8px 32px;font-variant-numeric:tabular-nums}
+/* ¥ は金額の数字と同じ大きさ・太さにそろえる */
+.amt{position:relative}.amt span{position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:16px;line-height:1;color:var(--ink);pointer-events:none}.amt input{padding-left:28px}
+.amt.big span{font-size:20px;font-weight:700;left:13px}
 .row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .seg.small button{font-size:15px;min-height:40px}
 /* 長押しで削除 */
@@ -163,6 +165,47 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .items li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
 .items .nm{font-weight:700;background:transparent;border-color:transparent;padding:8px 6px;grid-column:1/-1}
 .items .nm:hover,.items .nm:focus{border-color:var(--line);background:var(--bg)}
+.items li{position:relative;padding-right:44px}
+.items .drag{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:36px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
+.items .drag i{display:block;width:18px;height:2.5px;border-radius:2px;background:rgba(2,135,96,.4)}
+.items li.dragging{z-index:5;background:var(--card);box-shadow:0 8px 22px rgba(20,35,29,.16);border-radius:12px;cursor:grabbing}
+.items li.dragging .drag{cursor:grabbing}
+/* 在庫切れ：赤の不透明度40% */
+.items li.low{background:rgba(194,55,44,.4);border-radius:12px;padding-left:8px}
+.items li.low .ucat{background:rgba(255,255,255,.7)}
+.lowbox{margin:12px 0 0;padding:10px 14px;border-radius:12px;background:rgba(194,55,44,.4);color:var(--ink);font-size:14px;line-height:1.6}
+.lowbox b{margin-right:8px}
+.elink{grid-column:1/-1;font-size:13px;overflow-wrap:anywhere}
+.items .nmw{grid-column:1/-1;display:flex;align-items:center;gap:8px;min-width:0}
+.items .nmw .nm{flex:1;cursor:pointer}
+.items .nmw .ghost.sm{margin:0;flex:none}
+.iedit{grid-column:1/-1;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 14px 14px;margin:4px 0}
+.iedit .l.sm:first-child{margin-top:8px}
+.ie-btns{display:flex;gap:8px;margin-top:14px}
+/* 開始日・終了日：スマホでは縦に並べる（iPhoneの日付欄は幅を取るため） */
+input[type=date]{min-width:0;width:100%;min-height:46px;cursor:pointer}
+input[type=date]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.7;padding:4px}
+@media(pointer:fine){input[type=date]::-webkit-calendar-picker-indicator{display:none}input[type=date]{background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect x='3' y='4.5' width='14' height='12.5' rx='2' fill='none' stroke='%23028760' stroke-width='1.6'/%3E%3Cpath d='M3 8.5h14M7 3v3M13 3v3' stroke='%23028760' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") right 12px center/18px no-repeat}}
+/* 自前のカレンダー（PC） */
+.calpop{position:absolute;left:0;top:calc(100% + 4px);z-index:12;width:280px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 28px rgba(20,35,29,.16);padding:10px 10px 8px;font-variant-numeric:tabular-nums}
+.calh{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.calh b{font-size:15px}
+.calh button,.calg button,.calf button{appearance:none;border:0;background:none;font:inherit;color:var(--ink);cursor:pointer;border-radius:8px}
+.calh button{width:34px;height:34px;font-size:20px;color:var(--roast)}
+.calh button:hover,.calg button:hover,.calf button:hover{background:var(--chip)}
+.calw,.calg{display:grid;grid-template-columns:repeat(7,1fr);text-align:center}
+.calw span{font-size:11px;color:var(--sub);padding:2px 0 4px}
+.calg button{height:34px;font-size:14px}
+.calg .sat{color:#2b6cb0}.calg .sun{color:var(--cost)}
+.calg .td{box-shadow:inset 0 0 0 1.5px var(--roast)}
+.calg button.sel{background:var(--roast);color:#fff}
+.calf{display:flex;justify-content:space-between;margin-top:4px;border-top:1px solid var(--line);padding-top:6px}
+.calf button{font-size:13px;color:var(--roast);padding:4px 8px}
+@media(max-width:600px){.row2.dates{grid-template-columns:minmax(0,1fr)}input[type=date]{-webkit-appearance:none;appearance:none;display:block;text-align:left}input[type=date]::-webkit-date-and-time-value{text-align:left}}
+.items .ucat{font-size:12px;font-weight:700;padding:3px 6px;border-radius:999px;background:var(--chip);color:var(--roast);white-space:nowrap;width:5.4em;text-align:center;overflow:hidden;text-overflow:ellipsis;flex:none}
+.items .ucat.none{color:var(--sub);font-weight:400}
+.items li.dirty .qty input{border-color:var(--roast);background:var(--card)}
+.qok{appearance:none;border:0;border-radius:12px;background:var(--roast);color:#fff;font:inherit;font-size:14px;min-height:40px;padding:6px 16px;margin-left:4px;cursor:pointer}
 .items span.nm{display:block;border:1.5px solid transparent;border-radius:10px;cursor:text;overflow-wrap:anywhere}
 .items .qty{display:flex;align-items:center;gap:6px}
 .items .qty input{width:5.5em;text-align:center;font-weight:700;font-variant-numeric:tabular-nums;padding:8px 6px}
@@ -209,7 +252,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .swb{appearance:none;width:32px;height:32px;border-radius:50%;border:3px solid var(--card);background:var(--c);box-shadow:0 0 0 1.5px var(--line);cursor:pointer;padding:0}
 .swb[aria-pressed=true]{box-shadow:0 0 0 2.5px var(--c)}
 .mnrow{display:grid;grid-template-columns:auto minmax(0,1.5fr) minmax(0,1fr);gap:6px;align-items:center;margin-bottom:8px}
-.mnrow .amt input{padding-left:32px}.mnrow .amt span{font-size:16px}
+.mnrow .amt input{padding-left:28px}
 /* メニューの売上 */
 .ms{margin-bottom:8px}
 .msr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
@@ -309,3 +352,24 @@ button,.go,a.ghost{font-weight:400!important}
 .mswipe>section.mside{position:absolute;top:0;left:0;right:0}
 .ur.over{background:#fbecea;border-radius:10px}
 .ur.over .qty input{border-color:var(--cost);color:var(--cost)}
+.calw span:first-child{color:var(--cost)}.calw span:last-child{color:#2b6cb0}
+.amt:has(input:placeholder-shown) span{color:var(--sub)}
+/* 記録した経費：1件ずつ枠で囲む（科目のボタンと同じ枠） */
+#clist{display:grid;gap:8px}
+#clist .ccard{display:block;padding:10px 14px 12px;border:1.5px solid var(--line);border-radius:12px;background:var(--card)}
+#clist .ccard.lp-on{background:#fbecea}
+.ccard .ctop{display:flex;align-items:center;gap:8px}
+.ccard .ccat{flex:none;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--roast)}
+.ccard .cname{flex:1;min-width:0;font-size:16px;overflow-wrap:anywhere}
+.ccard .cqty{font-weight:400;font-size:13px;color:var(--sub);margin-left:6px}
+.ccard .money{font-weight:700;font-size:17px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ccard .cmeta{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:6px;font-size:13px;color:var(--sub)}
+.ccard .cmeta i{font-style:normal;color:var(--line)}
+.ccard .cmeta .ghost.sm{margin:0 0 0 auto}
+.ccard .memo{display:block;margin-top:6px;font-size:14px;color:var(--sub)}
+.ccard .elink{display:block;margin-top:4px}
+.ccard .lpbar{padding-top:10px}
+/* 在庫：科目ごとのまとまり */
+#ilist .grp{display:flex;align-items:center;gap:8px;margin:20px 0 0;font-size:15px;color:var(--roast)}
+#ilist .grp span{font-size:12px;font-weight:400;color:var(--sub)}
+#ilist .items{margin-top:4px}
