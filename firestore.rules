@@ -9,22 +9,57 @@ service cloud.firestore {
         && request.auth.token.email_verified == true
         && request.auth.token.email in [
           'ctmy315@gmail.com',
-	  'fornow.coffee2026@gmail.com'
+          'fornow.coffee2026@gmail.com'
         ];
     }
 
-    // 記録の中身が正しい形かチェック
-    function validEntry() {
-      let d = request.resource.data;
-      return d.amount is number && d.amount > 0
-        && d.kind in ['sale', 'cost']
-        && d.event is string && d.event.size() <= 100
-        && d.person is string;
+    function str(v, max) { return v is string && v.size() <= max; }
+
+    // プロジェクト（店舗・イベント）
+    match /projects/{id} {
+      allow read, delete: if isMember();
+      allow create, update: if isMember()
+        && request.resource.data.type in ['event', 'shop']
+        && str(request.resource.data.name, 100)
+        && request.resource.data.name.size() > 0;
     }
 
+    // 売上・経費の記録（どのプロジェクトの分かを projectId で持つ）
     match /entries/{id} {
       allow read, delete: if isMember();
-      allow create, update: if isMember() && validEntry();
+      allow create, update: if isMember()
+        && request.resource.data.amount is number && request.resource.data.amount > 0
+        && request.resource.data.kind in ['sale', 'cost']
+        && request.resource.data.projectId is string
+        && request.resource.data.person is string;
+    }
+
+    // 在庫・備品の台帳
+    match /items/{id} {
+      allow read, delete: if isMember();
+      allow create, update: if isMember()
+        && request.resource.data.kind in ['stock', 'gear']
+        && str(request.resource.data.name, 60)
+        && request.resource.data.qty is number;
+    }
+
+    // プロジェクトごとの持ち物リスト
+    match /packs/{id} {
+      allow read, delete: if isMember();
+      allow create, update: if isMember()
+        && request.resource.data.projectId is string
+        && request.resource.data.itemId is string;
+    }
+
+    // いま開いている人のポインタの位置（自分の分だけ書ける）
+    match /presence/{uid} {
+      allow read: if isMember();
+      allow write: if isMember() && request.auth.uid == uid;
+    }
+
+    // 屋号情報（shop/info の1つだけ）
+    match /shop/{id} {
+      allow read, write: if isMember();
     }
   }
 }

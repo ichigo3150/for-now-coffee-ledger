@@ -1,6 +1,6 @@
 {
-  "name": "出店収支ノート",
-  "short_name": "収支ノート",
+  "name": "Ledger",
+  "short_name": "Ledger",
   "description": "コーヒーフェス出店の売上・経費・精算を3人で記録するアプリ",
   "lang": "ja",
   "start_url": "./",
