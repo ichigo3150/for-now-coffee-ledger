@@ -100,7 +100,7 @@ function sure(btn,fn,label='本当に削除'){
 function fill(el,html){
   if(!el)return;
   const a=document.activeElement;
-  if(a&&el.contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){el.dataset.stale='1';return}
+  if(a&&el.contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)&&!/^(checkbox|radio)$/.test(a.type)){el.dataset.stale='1';return}   // チェックの丸は描き直してよい
   el.dataset.stale='';el.innerHTML=html;
 }
 document.addEventListener('focusout',()=>setTimeout(()=>{if(document.querySelector('[data-stale="1"]'))V?.refresh?.()},0));
@@ -579,7 +579,7 @@ return{title:'在庫 / 備品',back:pBack(),html:`
 <div class="note" id="pkOff"></div>`,
 refresh(){
   const all=packList(id),on=all.filter(x=>!x.off),off=all.filter(x=>x.off&&itemOf(x.itemId));
-  $('#prog').textContent=on.length?`積んだ ${on.filter(x=>x.checked).length} / ${on.length}`:'';
+  {const n=on.filter(x=>x.checked).length;$('#prog').innerHTML=on.length?`積んだ ${n} / ${on.length}${n===on.length?'<span class="done-badge">DONE</span>':''}`:''}   // 全部積んだら DONE
   const by=k=>on.filter(x=>x.kind===k).sort((a,b)=>(itemOf(a.itemId)?.name||a.name||'').localeCompare(itemOf(b.itemId)?.name||b.name||'','ja'));
   const s=by('stock'),g=by('gear');
   fill($('#pkStock'),s.length?s.map(packRow).join(''):empty('在庫から選んで追加してください'));
@@ -617,7 +617,7 @@ onChange(e){
   const li=e.target.closest('li[data-id]'),f=e.target.dataset.fld;if(!li||!f)return;
   const pk=getPk(li.dataset.id);if(!pk)return;
   const b=writeBatch(fs);
-  if(f==='checked'){putPk(b,pk,{checked:e.target.checked});b.commit().catch(writeErr);return}
+  if(f==='checked'){li.classList.toggle('done',e.target.checked);putPk(b,pk,{checked:e.target.checked});b.commit().catch(writeErr);return}   // 押した時点で横線を引く
   const v=Math.max(0,num(e.target.value));
   if(f==='take'){setTake(pk,v);return}
   if(f==='used'){

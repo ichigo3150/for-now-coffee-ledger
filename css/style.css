@@ -373,3 +373,5 @@ button,.go,a.ghost{font-weight:400!important}
 #ilist .grp{display:flex;align-items:center;gap:8px;margin:20px 0 0;font-size:15px;color:var(--roast)}
 #ilist .grp span{font-size:12px;font-weight:400;color:var(--sub)}
 #ilist .items{margin-top:4px}
+/* 持ち物リスト：全部積んだら DONE（アクセントカラー 不透明度40%） */
+.done-badge{display:inline-block;margin-left:10px;padding:2px 12px;border-radius:999px;background:rgba(2,135,96,.4);color:var(--ink);font-size:13px;font-weight:700;letter-spacing:.06em;vertical-align:middle}
