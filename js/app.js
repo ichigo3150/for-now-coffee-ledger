@@ -258,7 +258,7 @@ function vItems(kind){const k=IK[kind];return{title:k.t,html:`
   <button class="go" type="submit">${k.t}に追加</button>
   <p class="fmsg" role="status"></p>
 </form>
-<p class="note">${kind==='stock'?'集計のページで「使った数」を入れると、ここの在庫数が自動で減ります。':'イベントの持ち物リストに入れて、積み込みのチェックに使えます。'}名前・科目・数え方・単位は「編集」で直せます。数は変えたあと「確定」を押すと保存されます（押さずにページを移ると元に戻ります）。消すときは行を長押し、並び替えは右端の ≡ をドラッグします。</p>
+<p class="note">${kind==='stock'?'持ち物リストの「持っていく」で在庫から引き、集計の「使った数」で残りが戻ります。':'イベントの持ち物リストに入れて、積み込みのチェックに使えます。'}名前・科目・数え方・単位は「編集」で直せます。数は変えたあと「確定」を押すと保存されます（押さずにページを移ると元に戻ります）。消すときは行を長押し、並び替えは右端の ≡ をドラッグします。</p>
 ${kind==='stock'?'<p class="lowbox" id="lowBox" role="status" hidden></p>':''}
 <div id="ilist"></div>`,
 init(){ui.iBean=null;ui.qtyDraft={};ui.editItem=null;drawIBean()},   // ページを開き直したら、確定していない数は捨てる
@@ -538,11 +538,11 @@ function deleteProject(id){
 // 在庫・備品（持ち物リスト）
 function packRow(pk){
   const it=itemOf(pk.itemId),st=pk.kind==='stock',u=esc(unitOf(it));
-  const bought=boughtOf(pk.projectId,pk.itemId),left=(pk.take||0)+bought-(pk.used||0);
+  const us=usedSetOf(pk),back=+((pk.take||0)-(pk.used||0)).toFixed(3);
   return `<li data-lp data-id="${esc(pk.id)}" class="${pk.checked?'done':''}">
     <label class="chk"><input type="checkbox" data-fld="checked"${pk.checked?' checked':''}><span class="nm">${esc(it?it.name:(pk.name||'（削除された品目）'))}</span></label>
     ${it?`<span class="stk">${st?'在庫':'登録'} ${qf(it.qty)}${u}</span>`:'<span></span>'}
-    <span class="meta">持っていく<span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${nv(pk.take)}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}${st&&pk.used?`<i>/</i>使った <b>${qf(pk.used)}</b>${u}`:''}${bought?`<i>/</i>買った <b>${qf(bought)}</b>${u}`:''}${st&&(bought||pk.used)?`<i>/</i>残り <b>${qf(left)}</b>${u}`:''}</span>
+    <span class="meta">持っていく<span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${nv(pk.take)}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}${st&&us?`<i>/</i>使った <b>${qf(pk.used)}</b>${u}${back>0?`<i>/</i>戻した <b>${qf(back)}</b>${u}`:''}`:''}</span>
   </li>`;
 }
 // 持ち物リスト：在庫・備品の全品目を出す。まだ記録のない品目は仮の行（_v）で、数を入れたときに保存する
@@ -560,16 +560,18 @@ const getPk=pid=>D.packs.find(x=>x.id===pid)||packList(id).find(x=>x.id===pid);
 // 仮の行なら丸ごと作る、あれば一部だけ書きかえる
 const putPk=(b,pk,patch)=>pk._v?b.set(doc(C.packs,pk.id),{...packBase(pk),...patch,...stamp()}):b.update(doc(C.packs,pk.id),{...patch,...stamp()});
 // 持っていく数：在庫・備品に登録されている数より多くはできない（在庫は、このイベントで使った分も含めた数まで）
-const takeMax=pk=>{const it=itemOf(pk.itemId);return it?Math.max(0,(it.qty||0)+(pk.kind==='stock'?(pk.used||0):0)):Infinity};
+const takeMax=pk=>packCap(pk);   // 在庫：いまの在庫＋このイベントで引いた分まで。備品：登録数まで
 const setTake=(pk,v)=>{
   v=Math.max(0,v);const mx=takeMax(pk);
   if(v>mx){v=mx;toast(`${itemOf(pk.itemId)?.name||''}は${qf(mx)}${unitOf(itemOf(pk.itemId))}までです`,true)}
-  const b=writeBatch(fs);putPk(b,pk,{take:+v.toFixed(3)});b.commit().catch(writeErr);
+  const b=writeBatch(fs);let r={};
+  if(pk.kind==='stock')r=writePack(b,pk,{take:+v.toFixed(3)});else putPk(b,pk,{take:+v.toFixed(3)});   // 在庫は持っていく数をすぐ在庫から引く
+  b.commit().catch(writeErr);if(pk.kind==='stock'&&!usedSetOf(pk))packToast(r.it,r.delta);
   const inp=$$('#view .pk li').find(x=>x.dataset.id===pk.id)?.querySelector('[data-fld="take"]');if(inp)inp.value=nv(v);
 };
 return{title:'在庫 / 備品',back:pBack(),html:`
 <div class="bar"><b id="prog"></b></div>
-<p class="note" style="margin-top:0">積んだらチェック。「使った数」は、経費 / トランザクション / 集計 の「集計」で入れます。在庫は上の欄から選んで追加、備品は全部出ています。使わない物は行を長押しして外せます。</p>
+<p class="note" style="margin-top:0">積んだらチェック。在庫の「持っていく」に入れた数は、すぐ在庫から引きます。「使った数」は「集計」で入れると、持っていくより少なかった分が在庫に戻ります。在庫は上の欄から選んで追加、備品は全部出ています。使わない物は行を長押しして外せます。</p>
 <h2>在庫</h2>
 <div class="pkadd"><select id="pkSel" aria-label="在庫から選ぶ"></select><button type="button" class="ghost" data-act="addStock">追加</button></div>
 <ul class="pk" id="pkStock"></ul>
@@ -606,9 +608,10 @@ onLpDelete(li){
   const b=writeBatch(fs);
   if(pk.kind==='stock')b.delete(doc(C.packs,pk.id));   // 在庫はリストから消す（また選べば戻せる）
   else b.set(doc(C.packs,pk.id),{...packBase(pk),take:0,used:0,checked:false,off:true,...stamp()});   // 備品は「外した品目」に回す
-  if(pk.kind==='stock'&&pk.used&&itemOf(pk.itemId))b.update(doc(C.items,pk.itemId),{qty:increment(pk.used),...stamp()});
+  const ap=pk.kind==='stock'?packApplied(pk):0;
+  if(ap&&itemOf(pk.itemId))b.update(doc(C.items,pk.itemId),{qty:increment(ap),...stamp()});
   b.commit().catch(writeErr);
-  toast(pk.kind==='stock'&&pk.used?'外しました（使った分を在庫に戻しました）':'このイベントのリストから外しました');
+  toast(ap?`外しました（在庫に${qf(ap)}${unitOf(itemOf(pk.itemId))}戻しました）`:'このイベントのリストから外しました');
 },
 onChange(e){
   const li=e.target.closest('li[data-id]'),f=e.target.dataset.fld;if(!li||!f)return;
@@ -635,28 +638,39 @@ function itemCat(itemId){
 }
 // 科目の並び順（屋号情報の科目の順。科目なしは最後）
 const catRank=c=>{if(!c)return 999;const i=costCats().indexOf(c);return i<0?500:i};
+// ===== 持ち物と在庫 =====
+// 「持っていく」に入れた数は、すぐ在庫から引く。集計で「使った数」を入れたら、持っていく − 使った の分を在庫に戻す。
+// つまり在庫から引いている数は、使った数を入れる前は「持っていく」、入れたあとは「使った」。applied に今引いている数を覚えておく
+const usedSetOf=pk=>pk.usedSet??((pk.used||0)>0);   // 以前の版で使った数を入れた行は「入れた」とみなす
+const packWant=pk=>pk.kind==='stock'?+(+((usedSetOf(pk)?pk.used:pk.take)||0)).toFixed(3):0;
+const packApplied=pk=>pk.applied??(pk.kind==='stock'?(pk.used||0):0);   // 以前の版は使った数だけを引いていた
+const packCap=pk=>{const it=itemOf(pk.itemId);return it?+((it.qty||0)+(pk.kind==='stock'?packApplied(pk):0)).toFixed(3):Infinity};   // 在庫の総数
+function writePack(b,pk,patch){
+  const nx={...pk,...patch},want=packWant(nx),delta=+(want-packApplied(pk)).toFixed(3),it=itemOf(pk.itemId);
+  const data={...patch,...(pk.kind==='stock'?{applied:want}:{}),...stamp()};
+  if(pk._v||!D.packs.some(x=>x.id===pk.id))b.set(doc(C.packs,pk.id),{...packBase(pk),...data,off:false});
+  else b.update(doc(C.packs,pk.id),{...data,...(pk.off?{off:false}:{})});
+  if(it&&delta)b.update(doc(C.items,it.id),{qty:increment(-delta),...stamp()});
+  return{delta,it};
+}
+function packToast(it,delta,over){
+  if(over){toast(over,true);return}
+  if(!it||!delta)return;
+  const q=(it.qty||0)-delta;
+  if(delta>0&&isLow({...it,qty:q}))toast(`${it.name}が在庫切れです（残り${qf(q)}${unitOf(it)}）`,true);
+  else toast(`${it.name}：在庫${delta>0?'から':'に'}${qf(Math.abs(delta))}${unitOf(it)}${delta>0?'引きました':'戻しました'}`);
+}
+const packOf=(pid,pkid)=>{const iid=pkid.slice(pid.length+1),it=itemOf(iid);return D.packs.find(x=>x.id===pkid)||(it?{id:pkid,projectId:pid,itemId:iid,kind:it.kind,name:it.name,take:0,used:0,checked:false,_v:true}:null)};
+// 使った数（集計のページ）。v が null なら「まだ入れていない」に戻す
 function setUsed(pid,pkid,v){
-  // 持ち物リストにまだ入っていない在庫は、ここで入れる（仮の行として扱う）
-  const iid=pkid.slice(pid.length+1),it0=itemOf(iid);
-  const pk=D.packs.find(x=>x.id===pkid)||(it0?{id:pkid,projectId:pid,itemId:iid,kind:it0.kind,name:it0.name,take:0,used:0,checked:false,_v:true}:null);if(!pk)return;
-  v=Math.max(0,+(+v).toFixed(3));
-  const it=itemOf(pk.itemId);let over=null;
-  // 在庫の総数（いまの在庫＋このイベントですでに使った分）を超えたら知らせて、総数までにする
-  if(it){const mx=+((it.qty||0)+(pk.used||0)).toFixed(3);
-    if(v>mx){
-      const row=$$('#usedRows .ur').find(r=>r.dataset.pk===pk.id);
-      if(row){row.classList.add('over');setTimeout(()=>row.classList.remove('over'),2200);const inp=row.querySelector('[data-fld="used"]');if(inp)inp.value=qf(mx).replace(/,/g,'')}
-      over=`${it.name}の在庫は${qf(mx)}${unitOf(it)}です。それより多くは入れられません`;
-      v=mx;
-    }}
-  const delta=+(v-(pk.used||0)).toFixed(3);if(!delta){if(over)toast(over,true);return}
-  const b=writeBatch(fs);
-  if(pk._v)b.set(doc(C.packs,pk.id),{...packBase(pk),used:v,off:false,...stamp()});else b.update(doc(C.packs,pk.id),{used:v,...(pk.off?{off:false}:{}),...stamp()});
-  if(it)b.update(doc(C.items,it.id),{qty:increment(-delta),...stamp()});
-  b.commit().catch(writeErr);
-  if(over)toast(over+`（${qf(v)}${unitOf(it)}にしました）`,true);
-  else if(it&&delta>0&&isLow({...it,qty:(it.qty||0)-delta}))toast(`${it.name}が在庫切れです（残り${qf((it.qty||0)-delta)}${unitOf(it)}）`,true);
-  else if(it)toast(`${it.name}：在庫を${qf(Math.abs(delta))}${unitOf(it)}${delta>0?'減らしました':'戻しました'}`);
+  const pk=packOf(pid,pkid);if(!pk)return;
+  let over=null;const it=itemOf(pk.itemId);
+  if(v!=null){
+    v=Math.max(0,+(+v).toFixed(3));const mx=packCap(pk);
+    if(it&&v>mx){over=`${it.name}の在庫は${qf(mx)}${unitOf(it)}です。それより多くは入れられません（${qf(mx)}${unitOf(it)}にしました）`;v=mx}
+  }
+  const bt=writeBatch(fs);const r=writePack(bt,pk,v==null?{used:0,usedSet:false}:{used:v,usedSet:true});bt.commit().catch(writeErr);
+  packToast(r.it,r.delta,over);
 }
 // 経費・トランザクション・集計
 function drawKind(){
@@ -782,7 +796,7 @@ function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トラン�
 </section>
 <section id="m-sum" hidden>
   <div class="card used">
-    <div class="bar" style="margin:0 0 4px"><b>使った数</b><span class="note" style="margin:0">入れた分だけ在庫から引きます</span></div>
+    <div class="bar" style="margin:0 0 4px"><b>使った数</b><span class="note" style="margin:0">持っていくより少なければ、その分を在庫に戻します</span></div>
     <div id="usedRows"></div>
     <p class="fmsg" role="status"></p>
   </div>
@@ -823,10 +837,10 @@ refresh(){
   {const by=new Map(packsOf(id).map(x=>[x.itemId,x]));
    const rows=D.items.filter(i=>i.kind==='stock').map(it=>by.get(it.id)||{id:id+'_'+it.id,projectId:id,itemId:it.id,kind:'stock',take:0,used:0,_v:true})
      .sort((a,b)=>catRank(itemCat(a.itemId))-catRank(itemCat(b.itemId))||(itemOf(a.itemId).name||'').localeCompare(itemOf(b.itemId).name||'','ja'));
-   fill($('#usedRows'),rows.length?rows.map(pk=>{const it=itemOf(pk.itemId),u=esc(unitOf(it)),bt=boughtOf(id,pk.itemId),left=(pk.take||0)+bt-(pk.used||0),st=it.bean?0.1:1;
+   fill($('#usedRows'),rows.length?rows.map(pk=>{const it=itemOf(pk.itemId),u=esc(unitOf(it)),us=usedSetOf(pk),back=+((pk.take||0)-(pk.used||0)).toFixed(3),st=it.bean?0.1:1;
      const cat=itemCat(pk.itemId);
-     return `<div class="ur" data-pk="${esc(pk.id)}"><span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span><span class="nm">${esc(it.name)}<span class="meta">持っていく ${qf(pk.take||0)}${u}${bt?` / 買った ${qf(bt)}${u}`:''} / 残り <b class="${left<0?'c':''}">${qf(left)}</b>${u}</span></span>
-       <span class="qty"><button type="button" class="step" data-ustep="${-st}" aria-label="減らす">−</button><input data-fld="used" inputmode="decimal" value="${nv(pk.used)}" aria-label="${esc(it.name)}の使った数"><button type="button" class="step" data-ustep="${st}" aria-label="増やす">＋</button><span class="unit">${u}</span></span></div>`}).join(''):'<p class="note" style="margin:0">在庫に品目を登録すると、ここで使った数を入れられます。</p>')}
+     return `<div class="ur" data-pk="${esc(pk.id)}"><span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span><span class="nm">${esc(it.name)}<span class="meta">持っていく ${qf(pk.take||0)}${u}${us?(back>0?` / 戻す <b>${qf(back)}</b>${u}`:back<0?` / 持っていくより <b class="c">${qf(-back)}</b>${u} 多い`:' / 戻す分なし'):''}</span></span>
+       <span class="qty"><button type="button" class="step" data-ustep="${-st}" aria-label="減らす">−</button><input data-fld="used" inputmode="decimal" value="${us?qf(pk.used||0).replace(/,/g,''):''}" placeholder="${pk.take?qf(pk.take).replace(/,/g,''):''}" aria-label="${esc(it.name)}の使った数"><button type="button" class="step" data-ustep="${st}" aria-label="増やす">＋</button><span class="unit">${u}</span></span></div>`}).join(''):'<p class="note" style="margin:0">在庫に品目を登録すると、ここで使った数を入れられます。</p>')}
   $('#sS').textContent=yen(t.s);$('#sC').textContent=yen(t.c);$('#sP').textContent=yen(t.p);
   const bars=(kind,cls)=>{const r=[...new Set([...(kind==='cost'?costCats():CATS.sale),...list.filter(e=>e.kind===kind).map(e=>e.category)])].map(c=>({c,v:list.filter(e=>e.kind===kind&&e.category===c).reduce((a,e)=>a+(e.amount||0),0)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);const mx=Math.max(1,...r.map(x=>x.v));
     return r.length?r.map(x=>`<div class="cat"><span>${esc(x.c)}</span><span class="track"><span class="fill ${cls}" style="width:${(x.v/mx*100).toFixed(1)}%"></span></span><b>${yen(x.v)}</b></div>`).join(''):`<p class="empty">${kind==='sale'?'売上':'経費'}の記録がありません</p>`};
@@ -838,7 +852,7 @@ onClick(e){
   if(b=e.target.closest('#cats button')){ui.cat=b.dataset.c;drawKind();return}
   if(b=e.target.closest('#bBean button')){ui.bBean=b.dataset.b==='1';drawBuy();return}
   if(b=e.target.closest('#bKind button')){if(!b.disabled){ui.bDest=ui.bDest===b.dataset.d?null:b.dataset.d;drawBuy()}return}
-  if(b=e.target.closest('[data-ustep]')){const r=b.closest('.ur'),cur=D.packs.find(x=>x.id===r.dataset.pk)?.used||0;setUsed(id,r.dataset.pk,cur+Number(b.dataset.ustep));return}
+  if(b=e.target.closest('[data-ustep]')){const r=b.closest('.ur'),pk=packOf(id,r.dataset.pk),cur=pk?(usedSetOf(pk)?(pk.used||0):(pk.take||0)):0;setUsed(id,r.dataset.pk,cur+Number(b.dataset.ustep));return}   // まだ入れていなければ、持っていく数から±
   if(b=e.target.closest('[data-vstep]')){setVisitors(id,(proj(id)?.visitors||0)+Number(b.dataset.vstep));return}
   if(b=e.target.closest('[data-mstep]')){const r=b.closest('.msr'),cur=menuEntry(id,r.dataset.mid)?.count||0;setMenuCount(id,r.dataset.mid,cur+Number(b.dataset.mstep));return}
   if(b=e.target.closest('#holder button')){
@@ -870,7 +884,7 @@ onLpDelete(li){
 },
 onChange(e){
   if(e.target.id==='visitors'){setVisitors(id,num(e.target.value));return}
-  if(e.target.dataset.fld==='used'){setUsed(id,e.target.closest('.ur').dataset.pk,num(e.target.value));return}
+  if(e.target.dataset.fld==='used'){setUsed(id,e.target.closest('.ur').dataset.pk,e.target.value.trim()===''?null:num(e.target.value));return}   // 空にしたら「まだ入れていない」
   if(e.target.dataset.fld==='cnt'){const r=e.target.closest('.msr');setMenuCount(id,r.dataset.mid,num(e.target.value))}
 },
 onInput(e){
