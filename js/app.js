@@ -82,6 +82,66 @@ const boughtOf=(pid,itemId)=>entriesOf(pid).filter(e=>e.itemId===itemId).reduce(
 const entriesOf=pid=>D.entries.filter(e=>e.projectId===pid);
 const packsOf=pid=>D.packs.filter(p=>p.projectId===pid);
 function totals(list){let s=0,c=0;for(const e of list){if(e.kind==='sale')s+=e.amount||0;else c+=e.amount||0}return{s,c,p:s-c}}
+// ===== 在庫の値段：使った分だけ経費にする =====
+// 経費で買った在庫品（品目を「在庫」に反映した記録）は、買ったプロジェクトの経費にはしない。
+// 持ち物リスト／使った数で在庫から引かれた分だけを、そのプロジェクトの「材料費」にする。
+// 使う順番は古く買った物から（先入先出法）。値段は買ったときの1つあたりの値段。
+// 使われた分の金額は、その在庫を買った人に、使われたプロジェクトの精算で戻す（残りは立て替えのまま繰り越し）。
+// 在庫ページで数だけ入れた物（値段の記録がない分）は0円として扱う。
+let SC_CACHE=null;
+function stockCost(){
+  if(SC_CACHE)return SC_CACHE;
+  const pdate=pid=>{const p=proj(pid);return p?(p.endDate||p.date||''):''};
+  const isBuy=e=>e.kind==='cost'&&e.itemId&&(e.qty||0)>0&&itemOf(e.itemId)?.kind==='stock'&&proj(e.projectId);
+  const buys=D.entries.filter(isBuy),uses=D.packs.filter(pk=>pk.kind==='stock'&&proj(pk.projectId)&&packApplied(pk)>0);
+  // 在庫ページの「使う」で、メンバーが自分で使った分（品目の takeouts に入っている）
+  const outs=[];for(const it of D.items)if(it.kind==='stock')(it.takeouts||[]).forEach((o,k)=>{if(o.q>0)outs.push({itemId:it.id,p:o.p,q:o.q,d:o.d||'',t:o.t||0,k,done:!!o.done,checks:o.checks||{}})});
+  // 起きた順に並べる（同じ日なら、買った → 使った の順）
+  const ev=[...buys.map(e=>({t:e.date||pdate(e.projectId)||'9999',o:0,c:e.createdAt||0,buy:e})),
+            ...uses.map(pk=>({t:pdate(pk.projectId)||'9999',o:1,c:pk.createdAt||0,use:pk,q:packApplied(pk)})),
+            ...outs.map(o=>({t:o.d||'9999',o:1,c:o.t,out:o}))]
+    .sort((a,b)=>a.t.localeCompare(b.t)||a.o-b.o||a.c-b.c);
+  // 値段の記録がない在庫（最初から数だけ入れてあった分）＝ いまの数 − 買った数 ＋ 使った数
+  const lots=new Map();
+  for(const it of D.items.filter(i=>i.kind==='stock')){
+    const bought=buys.filter(e=>e.itemId===it.id).reduce((a,e)=>a+e.qty,0),used=uses.filter(pk=>pk.itemId===it.id).reduce((a,pk)=>a+packApplied(pk),0)+outs.filter(o=>o.itemId===it.id).reduce((a,o)=>a+o.q,0);
+    const open=+((it.qty||0)-bought+used).toFixed(3);
+    lots.set(it.id,open>0?[{qty:open,price:0,payer:''}]:[]);
+  }
+  const byProj={},buyIds=new Set(buys.map(e=>e.id)),debts=[];
+  const P=pid=>byProj[pid]||(byProj[pid]={cost:0,lines:[],reimb:{}});
+  for(const x of ev){
+    if(x.buy){const e=x.buy;if(!lots.has(e.itemId))lots.set(e.itemId,[]);lots.get(e.itemId).push({qty:e.qty,price:e.amount/e.qty,payer:e.person||''});continue}
+    if(x.out){ // 自分で使った分：まず自分が買った分から（その人の負担）。足りなければほかの人の分から使い、その人に払う
+      const o=x.out,L=lots.get(o.itemId)||[];let need=o.q;o.own=0;
+      for(const own of [true,false])for(let k=0;k<L.length&&need>1e-9;){const l=L[k];if((l.payer===o.p)!==own){k++;continue}
+        const q=Math.min(l.qty,need),v=q*l.price;if(own)o.own+=v;else if(l.payer&&v)debts.push({out:o,to:l.payer,amount:v});
+        l.qty=+(l.qty-q).toFixed(3);need=+(need-q).toFixed(3);if(l.qty<=1e-9)L.splice(k,1);else k++}
+      continue;
+    }
+    const pk=x.use,L=lots.get(pk.itemId)||[];let need=x.q,cost=0,noPrice=0;const by={};
+    while(need>1e-9&&L.length){const l=L[0],q=Math.min(l.qty,need),v=q*l.price;cost+=v;if(l.payer&&v)by[l.payer]=(by[l.payer]||0)+v;if(!l.price)noPrice+=q;l.qty=+(l.qty-q).toFixed(3);need=+(need-q).toFixed(3);if(l.qty<=1e-9)L.shift()}
+    if(need>1e-9)noPrice+=need;
+    const r=P(pk.projectId);r.cost+=cost;r.lines.push({itemId:pk.itemId,qty:x.q,cost,noPrice:+noPrice.toFixed(3),by});
+    for(const [n,v] of Object.entries(by))r.reimb[n]=(r.reimb[n]||0)+v;
+  }
+  // まだ使われていない在庫：だれが立て替え中か
+  const holding={};
+  for(const [iid,L] of lots)for(const l of L)if(l.payer&&l.price&&l.qty>1e-9){const h=holding[l.payer]||(holding[l.payer]={value:0,items:{}});h.value+=l.qty*l.price;h.items[iid]=(h.items[iid]||0)+l.qty}
+  // 自分で使った分のカード：使った1回ごとに1枚
+  //  ・ほかの人が買った分を使った → 払う相手（受け取る人）がチェックしたら完了
+  //  ・自分が買った分だけを使った → ほかのメンバー全員がチェックしたら完了
+  const to=new Map();for(const d of debts){const k=d.out.itemId+'#'+d.out.k,m=to.get(k)||{};m[d.to]=(m[d.to]||0)+d.amount;to.set(k,m)}
+  const cards=outs.map(o=>{const t=to.get(o.itemId+'#'+o.k)||{},payees=Object.keys(t).filter(n=>Math.round(t[n]));
+    const need=payees.length?payees:people().filter(n=>n!==o.p);
+    return{...o,to:t,payees,need,complete:o.done||need.every(n=>o.checks[n])}}).sort((a,b)=>(b.d||'').localeCompare(a.d||'')||b.t-a.t);
+  return SC_CACHE={byProj,buyIds,holding,cards};
+}
+const matOf=pid=>stockCost().byProj[pid]||{cost:0,lines:[],reimb:{}};
+const isMatBuy=e=>stockCost().buyIds.has(e.id);
+// プロジェクトの収支：在庫品を買った分は外し、使った分（材料費）を経費に入れる
+function projTotals(pid,list){const t=totals((list||entriesOf(pid)).filter(e=>!isMatBuy(e))),m=matOf(pid).cost;return{s:t.s,c:t.c+m,p:t.p-m,mat:m}}
+function sumTotals(ps){return ps.reduce((a,p)=>{const t=projTotals(p.id);return{s:a.s+t.s,c:a.c+t.c,p:a.p+t.p}},{s:0,c:0,p:0})}
 const sortedProjects=()=>[...D.projects].sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.createdAt||0)-(a.createdAt||0));
 
 function setStatus(t,warn){const s=$('#status');s.textContent=t;s.className='status'+(warn&&t?' warn':'')}
@@ -107,7 +167,7 @@ document.addEventListener('focusout',()=>setTimeout(()=>{if(document.querySelect
 
 const empty=t=>`<li class="empty">${esc(t)}</li>`;
 function projCards(list){
-  return list.map(p=>{const t=totals(entriesOf(p.id));return `<li data-lp data-id="${esc(p.id)}"><a href="#p/${esc(p.id)}">
+  return list.map(p=>{const t=projTotals(p.id);return `<li data-lp data-id="${esc(p.id)}"><a href="#p/${esc(p.id)}">
     <span class="badge ${p.type==='shop'?'shop':''}">${TYPE[p.type]||''}</span>
     <b class="nm">${esc(p.name)}</b>
     <span class="meta">${p.type==='event'?(dateRange(p)||'日付未定'):(p.place?esc(p.place):'')}</span>
@@ -128,10 +188,10 @@ function vHome(){return{title:'',html:`
 <h2>プロジェクト別</h2>
 <ul class="plist" id="tList"></ul>`,
 refresh(){
-  const ids=new Set(D.projects.map(p=>p.id)),all=D.entries.filter(e=>ids.has(e.projectId)),t=totals(all);
+  const t=sumTotals(D.projects);
   $('#tProfit').textContent=yen(t.p);$('#tProfit').className=t.p<0?'c':'';
   const vis=D.projects.reduce((a,p)=>a+(p.visitors||0),0);$('#tVisW').hidden=!vis;$('#tVis').textContent=vis.toLocaleString('ja-JP')+'人';
-  $('#tType').innerHTML=['event','shop'].map(k=>{const ps=D.projects.filter(p=>p.type===k),pi=new Set(ps.map(p=>p.id)),x=totals(all.filter(e=>pi.has(e.projectId)));
+  $('#tType').innerHTML=['event','shop'].map(k=>{const ps=D.projects.filter(p=>p.type===k),x=sumTotals(ps);
     return `<tr><td><b>${TYPE[k]}</b></td><td>${ps.length}件</td><td>${yen(x.s)}</td><td>${yen(x.c)}</td><td class="${x.p<0?'c':'s'}"><b>${yen(x.p)}</b></td></tr>`}).join('');
   
   $('#tList').innerHTML=projCards(sortedProjects())||empty('まだプロジェクトがありません。左のメニューの「＋ プロジェクト作成」から始めましょう。');
@@ -234,6 +294,17 @@ function itemEditForm(i,kind){
   </div>`;
 }
 // 在庫・備品の数の「確定前」の値（確定を押すまで保存しない）
+// 在庫の「使う」：メンバーが屋号とは別に、自分で使った分
+function itemUseForm(i){
+  const P=people(),me=ui.usePerson||memberOfEmail(auth.currentUser?.email)||ui.person;ui.usePerson=P.includes(me)?me:null;
+  const u=esc(unitOf(i));
+  return `<div class="iuse">
+    <p class="note" style="margin:0 0 6px">屋号とは別に、自分で使った分です。自分が買った分から先に引きます。使った分は、下にカードで出ます。</p>
+    <div class="l sm">使った人</div><div class="chips iu-p">${P.map(n=>`<button type="button" data-up="${esc(n)}" style="--pc:${A40(colorOf(n))}" aria-pressed="${n===ui.usePerson}">${esc(n)}</button>`).join('')}</div>
+    <label class="l sm">使った数</label><div class="qin"><input class="iu-q" inputmode="decimal" placeholder="${i.bean?'例：0.5':'例：10'}"><span>${u}</span></div>
+    <div class="ie-btns"><button type="button" class="qok" data-act="iu-save">使う</button><button type="button" class="ghost" data-act="iu-cancel">やめる</button></div>
+  </div>`;
+}
 function setDraft(id,v){
   const it=itemOf(id);if(!it)return;
   v=Math.max(0,+(+v).toFixed(3));
@@ -254,17 +325,32 @@ function vItems(kind){const k=IK[kind];return{title:k.t,html:`
   <button class="go" type="submit">${k.t}に追加</button>
   <p class="fmsg" role="status"></p>
 </form>
-<p class="note">${kind==='stock'?'持ち物リストの「持っていく」で在庫から引き、集計の「使った数」で残りが戻ります。':'イベントの持ち物リストに入れて、積み込みのチェックに使えます。'}名前・科目・数え方・単位は「編集」で直せます。数は変えたあと「確定」を押すと保存されます（押さずにページを移ると元に戻ります）。消すときは行を長押し、並び替えは右端の ≡ をドラッグします。</p>
-${kind==='stock'?'<p class="lowbox" id="lowBox" role="status" hidden></p>':''}
-<div id="ilist"></div>`,
-init(){ui.iBean=null;ui.qtyDraft={};ui.editItem=null;drawIBean()},   // ページを開き直したら、確定していない数は捨てる
+<p class="note">${kind==='stock'?'持ち物リストの「持っていく」で在庫から引き、「使った」を入れると残りが戻ります。':'イベントの持ち物リストに入れて、積み込みのチェックに使えます。'}名前・科目・数え方・単位は「編集」で直せます。数は変えたあと「確定」を押すと保存されます（押さずにページを移ると元に戻ります）。消すときは行を長押し、並び替えは右端の ≡ をドラッグします。</p>
+${kind==='stock'?'<p class="lowbox" id="lowBox" role="status" hidden></p><div class="holdbox" id="holdBox" hidden></div>':''}
+<div id="ilist"></div>
+${kind==='stock'?'<section id="useCards" hidden><h2>自分で使った分</h2><p class="note" style="margin-top:0">メンバーが自分で使った在庫です。ほかの人が買った分を使ったときは、受け取った人がチェック。自分の立て替え分を使ったときは、ほかのメンバー全員がチェックすると完了して消えます。<span id="ucMe"></span></p><ul class="ucards" id="useCardList"></ul></section>':''}`,
+init(){ui.iBean=null;ui.qtyDraft={};ui.editItem=null;ui.useItem=null;drawIBean()},   // ページを開き直したら、確定していない数は捨てる
 refresh(){
   const list=D.items.filter(i=>i.kind===kind).sort(byOrder);
   const dr=ui.qtyDraft||{};
+  if(kind==='stock'){const sc=stockCost(),H=sc.holding,hn=Object.keys(H).filter(n=>Math.round(H[n].value));$('#holdBox').hidden=!hn.length;
+    $('#holdBox').innerHTML=(hn.length?`<b>立て替え中の在庫</b><span class="hnote">買った人に、使われたプロジェクトの精算で戻ります</span>${hn.map(n=>`<div class="hrow"><span>${esc(n)}<small>${Object.entries(H[n].items).map(([iid,q])=>esc(itemOf(iid)?.name||'')+' '+qf(q)+esc(unitOf(itemOf(iid)))).join('、')}</small></span><b>${yen(H[n].value)}</b></div>`).join('')}`:'')
+      ;
+    // 自分で使った分：カードで出す。決まった人が全員チェックしたら完了（画面から消える）
+    const me=memberOfEmail(auth.currentUser?.email),cards=sc.cards.filter(c=>!c.complete);$('#useCards').hidden=!cards.length;
+    $('#ucMe').textContent=me?'':'チェックできるのは、屋号情報でGoogleアカウントのメールアドレスを登録したメンバーです。';
+    fill($('#useCardList'),cards.map(c=>{const it=itemOf(c.itemId),u=esc(unitOf(it)),mine=me&&c.need.includes(me);
+      return `<li class="ucard${mine?'':' nochk'}" data-item="${esc(c.itemId)}" data-k="${c.k}">
+      ${mine?`<label class="uc-chk"><input type="checkbox" data-act="uc-done"${c.checks[me]?' checked':''} aria-label="確認したらチェック"></label>`:'<span></span>'}
+      <span class="uc-body"><b>${esc(c.p)}<span class="uc-it">${esc(it?.name||'')} ${qf(c.q)}${u}</span></b>
+        <span class="meta">${md(c.d)} / ${c.payees.length?'ほかの人が買った在庫を使った分':'自分の立て替え分を使った分'}</span>
+        ${c.payees.length?c.payees.map(n=>`<span class="uc-pay">${esc(c.p)} → ${esc(n)}<b>${yen(c.to[n])}</b></span>`).join(''):`<span class="uc-pay">立て替えから差し引き<b>−${yen(c.own).replace('−','')}</b></span>`}
+        <span class="uc-who">${c.payees.length?'受け取った人がチェック':'ほかのメンバーが確認'}：${c.need.map(n=>`<i class="${c.checks[n]?'ok':''}">${esc(n)}${c.checks[n]?' ✓':''}</i>`).join('')}</span></span>
+    </li>`}).join(''));}
   if(kind==='stock'){const low=list.filter(isLow);$('#lowBox').innerHTML=low.length?`<b>在庫切れ</b>${low.map(i=>`${esc(i.name)}（${qf(i.qty)}${esc(unitOf(i))}${i.alertAt>0?` / ${qf(i.alertAt)}${esc(unitOf(i))}未満`:''}）`).join('、')}`:'';$('#lowBox').hidden=!low.length}
   const row=i=>{const d=dr[i.id],v=d??(i.qty||0),cat=kind==='stock'?itemCat(i.id):'';return `<li data-lp data-id="${esc(i.id)}" class="${isLow(i)?'low':''}${d!=null?' dirty':''}">
-    <span class="nmw">${kind==='stock'?`<span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span>`:''}<span class="nm" data-act="iedit" title="タップで編集 / 長押しで削除">${esc(i.name)}</span><button type="button" class="ghost sm" data-act="iedit">編集</button></span>
-    ${ui.editItem===i.id?itemEditForm(i,kind):''}
+    <span class="nmw">${kind==='stock'?`<span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span>`:''}<span class="nm" data-act="iedit" title="タップで編集 / 長押しで削除">${esc(i.name)}</span><button type="button" class="ghost sm" data-act="iedit">編集</button>${kind==='stock'?'<button type="button" class="ghost sm" data-act="iuse">使う</button>':''}</span>
+    ${ui.editItem===i.id?itemEditForm(i,kind):''}${kind==='stock'&&ui.useItem===i.id?itemUseForm(i):''}
     <span class="qty"><button type="button" class="step" data-step="${i.bean?-0.1:-1}" aria-label="${i.bean?'0.1kg':'1つ'}減らす">−</button><input data-fld="qty" inputmode="decimal" value="${nv(v)}" aria-label="${k.qtyL}"><button type="button" class="step" data-step="${i.bean?0.1:1}" aria-label="${i.bean?'0.1kg':'1つ'}増やす">＋</button><span class="unit">${esc(unitOf(i))}</span>${d!=null?`<button type="button" class="qok" data-act="qok">確定</button>`:''}</span>
     <span class="drag" aria-label="ドラッグで並び替え" title="ドラッグで並び替え"><i></i><i></i><i></i></span></li>`};
   // 在庫は科目ごとにまとめて並べる（科目の順は屋号情報の順、科目なしは最後）。まとまりの中は並び替えた順
@@ -310,11 +396,30 @@ onInput(e){
 },
 onClick(e){
   const ib=e.target.closest('#iBean button');if(ib){ui.iBean=ib.dataset.b==='1';drawIBean();return}
+  {const cb=e.target.closest('[data-act="uc-done"]');if(cb){const card=cb.closest('.ucard'),it=itemOf(card.dataset.item),k=+card.dataset.k,me=memberOfEmail(auth.currentUser?.email);if(!it||!(it.takeouts||[])[k]||!me)return;
+    const c=stockCost().cards.find(x=>x.itemId===it.id&&x.k===k);if(!c||!c.need.includes(me))return;
+    const checks={...(it.takeouts[k].checks||{})};if(cb.checked)checks[me]=true;else delete checks[me];
+    const last=c.need.every(n=>checks[n]);if(last)card.classList.add('done');   // 最後の1人なら横線を見せてから消す
+    setTimeout(()=>updateDoc(doc(C.items,it.id),{takeouts:(it.takeouts||[]).map((o,j)=>j===k?{...o,checks}:o),...stamp()}).catch(writeErr),last?450:0);
+    return}}
   const li=e.target.closest('li[data-id]');if(!li)return;const id=li.dataset.id;
   // 品目の編集（名前・科目・数え方・単位）
   if(e.target.closest('[data-act="iedit"]')){ui.editItem=ui.editItem===id?null:id;ui.eBean=null;this.refresh();const f=$$('#ilist li').find(x=>x.dataset.id===id)?.querySelector('.ie-name');if(f){f.focus();f.select()}return}
   const eb=e.target.closest('.ie-bean button');if(eb){ui.eBean=eb.dataset.b==='1';for(const x of li.querySelectorAll('.ie-bean button'))x.setAttribute('aria-pressed',String(x===eb));const u=li.querySelector('.ie-unit');if(u){u.disabled=ui.eBean;if(ui.eBean)u.value='kg';else if(u.value==='kg')u.value=''}return}
   if(e.target.closest('[data-act="ie-cancel"]')){ui.editItem=null;this.refresh();return}
+  // 自分で使う
+  if(e.target.closest('[data-act="iuse"]')){ui.useItem=ui.useItem===id?null:id;ui.editItem=null;this.refresh();li.querySelector('.iu-q')?.focus();return}
+  if(e.target.closest('[data-act="iu-cancel"]')){ui.useItem=null;this.refresh();return}
+  {const pb=e.target.closest('.iu-p button');if(pb){ui.usePerson=pb.dataset.up;for(const x of li.querySelectorAll('.iu-p button'))x.setAttribute('aria-pressed',String(x===pb));return}}
+  if(e.target.closest('[data-act="iu-save"]')){
+    const it=itemOf(id);if(!it)return;
+    const q=+Math.max(0,num(li.querySelector('.iu-q').value)).toFixed(3);
+    if(!ui.usePerson){toast('使った人を選んでください',true);return}
+    if(!q){toast('使った数を入れてください',true);li.querySelector('.iu-q').focus();return}
+    if(q>(it.qty||0)+1e-9){toast(`在庫は${qf(it.qty)}${unitOf(it)}です。それより多くは使えません`,true);return}
+    updateDoc(doc(C.items,id),{qty:increment(-q),takeouts:[...(it.takeouts||[]),{p:ui.usePerson,q,d:today(),t:Date.now()}],...stamp()}).catch(writeErr);
+    ui.useItem=null;return;
+  }
   if(e.target.closest('[data-act="ie-save"]')){
     const it=itemOf(id);if(!it)return;
     const name=li.querySelector('.ie-name').value.trim();
@@ -431,13 +536,13 @@ refresh(){
   $('#title').textContent=p.name;
   const b=$('#hType');b.textContent=TYPE[p.type]||'';b.className='badge'+(p.type==='shop'?' shop':'');
   $('#hDate').textContent=p.type==='event'?(dateRange(p)||'日付未定'):'';
-  const es=entriesOf(id),t=totals(es);
+  const es=entriesOf(id),t=projTotals(id,es);
   $('#hProfit').textContent=yen(t.p);$('#hSale').textContent=yen(t.s);$('#hCost').textContent=yen(t.c);
   $('#mDt').textContent=(p.type==='event'?'イベント':'店舗')+'詳細';
   $('#mD').textContent=[partsOf(p).length!==people().length?`参加 ${partsOf(p).length}人`:'',p.place,p.fee?'出店料 '+yen(p.fee):''].filter(Boolean).join(' / ')||'場所 / 出店料 / URLなど';
   const ps=packList(id).filter(x=>!x.off);$('#mK').textContent=ps.length?`${ps.length}点 / 積んだ ${ps.filter(x=>x.checked).length}`:'';
   $('#mM').textContent=es.length+'件の記録';
-  const mv=moves(payRows(es));$('#mP').textContent=es.length?(mv.length?mv.length+'件の受け渡し':'精算の必要なし'):'記録がまだありません';
+  const mv=moves(payRows(es,p));$('#mP').textContent=es.length?(mv.length?mv.length+'件の受け渡し':'精算の必要なし'):'記録がまだありません';
 }}}
 
 // イベント（店舗）詳細
@@ -545,7 +650,8 @@ function packRow(pk){
   return `<li data-lp data-id="${esc(pk.id)}" class="${pk.checked?'done':''}">
     <label class="chk"><input type="checkbox" data-fld="checked"${pk.checked?' checked':''}><span class="nm">${esc(it?it.name:(pk.name||'（削除された品目）'))}</span></label>
     ${it?`<span class="stk">${st?'在庫':'登録'} ${qf(it.qty)}${u}</span>`:'<span></span>'}
-    <span class="meta">持っていく<span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${nv(pk.take)}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}${st&&us?`<i>/</i>使った <b>${qf(pk.used)}</b>${u}${back>0?`<i>/</i>戻した <b>${qf(back)}</b>${u}`:''}`:''}</span>
+    <span class="meta"><span class="lb">持っていく</span><span class="tq"><button type="button" class="step" data-tstep="-1" aria-label="1つ減らす">−</button><input data-fld="take" inputmode="decimal" value="${nv(pk.take)}" aria-label="持っていく数"><button type="button" class="step" data-tstep="1" aria-label="1つ増やす">＋</button></span>${u}</span>
+    ${st?`<span class="meta used"><span class="lb">使った</span><span class="tq"><button type="button" class="step" data-ustep="${it?.bean?-0.1:-1}" aria-label="減らす">−</button><input data-fld="used" inputmode="decimal" value="${us?nv(pk.used):''}" placeholder="${pk.take?nv(pk.take):''}" aria-label="使った数"><button type="button" class="step" data-ustep="${it?.bean?0.1:1}" aria-label="増やす">＋</button></span>${u}${us?(back>0?`<i>/</i>在庫に戻した <b>${qf(back)}</b>${u}`:back<0?`<i>/</i>持っていくより <b class="c">${qf(-back)}</b>${u} 多い`:''):'<i>/</i><span class="hint">使い終わったら入れる</span>'}</span>`:''}
   </li>`;
 }
 // 持ち物リスト：在庫・備品の全品目を出す。まだ記録のない品目は仮の行（_v）で、数を入れたときに保存する
@@ -574,7 +680,7 @@ const setTake=(pk,v)=>{
 };
 return{title:'在庫 / 備品',back:pBack(),html:`
 <div class="bar"><b id="prog"></b></div>
-<p class="note" style="margin-top:0">積んだらチェック。在庫の「持っていく」に入れた数は、すぐ在庫から引きます。「使った数」は「集計」で入れると、持っていくより少なかった分が在庫に戻ります。在庫は上の欄から選んで追加、備品は全部出ています。使わない物は行を長押しして外せます。</p>
+<p class="note" style="margin-top:0">積んだらチェック。在庫の「持っていく」に入れた数は、すぐ在庫から引きます。イベントが終わったら「使った」に使った数を入れると、持っていくより少なかった分が在庫に戻り、使った分が材料費になります。在庫は上の欄から選んで追加、備品は全部出ています。使わない物は行を長押しして外せます。</p>
 <h2>在庫</h2>
 <div class="pkadd"><select id="pkSel" aria-label="在庫から選ぶ"></select><button type="button" class="ghost" data-act="addStock">追加</button></div>
 <ul class="pk" id="pkStock"></ul>
@@ -604,6 +710,8 @@ onClick(e){
   }
   const t=e.target.closest('[data-tstep]');
   if(t){const pk=getPk(t.closest('li').dataset.id);if(pk)setTake(pk,(pk.take||0)+Number(t.dataset.tstep));return}
+  const us=e.target.closest('[data-ustep]');   // 使った数：まだ入れていなければ、持っていく数から±
+  if(us){const pk=getPk(us.closest('li').dataset.id);if(pk){const cur=usedSetOf(pk)?(pk.used||0):(pk.take||0);setUsed(id,pk.id,cur+Number(us.dataset.ustep))}return}
 },
 onLpDelete(li){
   // このプロジェクトのリストから外す（品目そのものは在庫・備品に残る）。使った分は在庫に戻す
@@ -623,13 +731,7 @@ onChange(e){
   if(f==='checked'){li.classList.toggle('done',e.target.checked);putPk(b,pk,{checked:e.target.checked});b.commit().catch(writeErr);return}   // 押した時点で横線を引く
   const v=Math.max(0,num(e.target.value));
   if(f==='take'){setTake(pk,v);return}
-  if(f==='used'){
-    const delta=v-(pk.used||0),it=itemOf(pk.itemId);if(!delta)return;
-    putPk(b,pk,{used:v});
-    if(it)b.update(doc(C.items,it.id),{qty:increment(-delta),...stamp()});
-    b.commit().catch(writeErr);
-    if(it)toast(`在庫を${qf(Math.abs(delta))}${unitOf(it)}${delta>0?'減らしました':'戻しました'}`);
-  }
+  if(f==='used'){setUsed(id,pk.id,e.target.value.trim()===''?null:v);return}   // 空にしたら「まだ入れていない」に戻す
 }}}
 
 // 使った数（集計のページで入れる）。変えた分だけ在庫の数を動かす
@@ -642,7 +744,7 @@ function itemCat(itemId){
 // 科目の並び順（屋号情報の科目の順。科目なしは最後）
 const catRank=c=>{if(!c)return 999;const i=costCats().indexOf(c);return i<0?500:i};
 // ===== 持ち物と在庫 =====
-// 「持っていく」に入れた数は、すぐ在庫から引く。集計で「使った数」を入れたら、持っていく − 使った の分を在庫に戻す。
+// 「持っていく」に入れた数は、すぐ在庫から引く。「使った」を入れたら、持っていく − 使った の分を在庫に戻す。
 // つまり在庫から引いている数は、使った数を入れる前は「持っていく」、入れたあとは「使った」。applied に今引いている数を覚えておく
 const usedSetOf=pk=>pk.usedSet??((pk.used||0)>0);   // 以前の版で使った数を入れた行は「入れた」とみなす
 const packWant=pk=>pk.kind==='stock'?+(+((usedSetOf(pk)?pk.used:pk.take)||0)).toFixed(3):0;
@@ -664,7 +766,7 @@ function packToast(it,delta,over){
   else toast(`${it.name}：在庫${delta>0?'から':'に'}${qf(Math.abs(delta))}${unitOf(it)}${delta>0?'引きました':'戻しました'}`);
 }
 const packOf=(pid,pkid)=>{const iid=pkid.slice(pid.length+1),it=itemOf(iid);return D.packs.find(x=>x.id===pkid)||(it?{id:pkid,projectId:pid,itemId:iid,kind:it.kind,name:it.name,take:0,used:0,checked:false,_v:true}:null)};
-// 使った数（集計のページ）。v が null なら「まだ入れていない」に戻す
+// 使った数（プロジェクトの在庫 / 備品のページで入れる）。v が null なら「まだ入れていない」に戻す
 function setUsed(pid,pkid,v){
   const pk=packOf(pid,pkid);if(!pk)return;
   let over=null;const it=itemOf(pk.itemId);
@@ -796,12 +898,8 @@ function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トラン�
   <ul class="list" id="list"></ul>
 </section>
 <section id="m-sum" hidden>
-  <div class="card used">
-    <div class="bar" style="margin:0 0 4px"><b>使った数</b><span class="note" style="margin:0">持っていくより少なければ、その分を在庫に戻します</span></div>
-    <div id="usedRows"></div>
-    <p class="fmsg" role="status"></p>
-  </div>
   <div class="sumbox"><div><i>売上</i><b class="s" id="sS"></b></div><div><i>経費</i><b class="c" id="sC"></b></div><div><i>利益</i><b id="sP"></b></div></div>
+  <p class="note" id="sMat"></p>
   <h2>売上の内訳</h2><div id="saleRows"></div>
   <h2>経費の内訳</h2><div id="catRows"></div>
 </section>
@@ -832,7 +930,7 @@ refresh(){
   $('#cCount').textContent=costs.length?`${costs.length}件 / ${yen(costs.reduce((a,e)=>a+(e.amount||0),0))}`:'';
   $('#clist').innerHTML=costs.length?costs.map(costCard).join(''):empty('まだ経費の記録がありません');
   $('#bList').innerHTML=[...D.items].sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja')).map(i=>`<option value="${esc(i.name)}">${i.kind==='gear'?'備品':'在庫'} ${qf(i.qty)}${esc(unitOf(i))}</option>`).join('');
-  const t=totals(list);
+  const t=projTotals(id,list);
   // 使った数（持ち物リストに入れた在庫）
   // 在庫に登録してある品目をすべて出す（科目ごとにまとめて並べる）
   {const by=new Map(packsOf(id).map(x=>[x.itemId,x]));
@@ -843,9 +941,13 @@ refresh(){
      return `<div class="ur" data-pk="${esc(pk.id)}"><span class="ucat${cat?'':' none'}">${esc(cat||'科目なし')}</span><span class="nm">${esc(it.name)}<span class="meta">持っていく ${qf(pk.take||0)}${u}${us?(back>0?` / 戻す <b>${qf(back)}</b>${u}`:back<0?` / 持っていくより <b class="c">${qf(-back)}</b>${u} 多い`:' / 戻す分なし'):''}</span></span>
        <span class="qty"><button type="button" class="step" data-ustep="${-st}" aria-label="減らす">−</button><input data-fld="used" inputmode="decimal" value="${us?qf(pk.used||0).replace(/,/g,''):''}" placeholder="${pk.take?qf(pk.take).replace(/,/g,''):''}" aria-label="${esc(it.name)}の使った数"><button type="button" class="step" data-ustep="${st}" aria-label="増やす">＋</button><span class="unit">${u}</span></span></div>`}).join(''):'<p class="note" style="margin:0">在庫に品目を登録すると、ここで使った数を入れられます。</p>')}
   $('#sS').textContent=yen(t.s);$('#sC').textContent=yen(t.c);$('#sP').textContent=yen(t.p);
-  const bars=(kind,cls)=>{const r=[...new Set([...(kind==='cost'?costCats():CATS.sale),...list.filter(e=>e.kind===kind).map(e=>e.category)])].map(c=>({c,v:list.filter(e=>e.kind===kind&&e.category===c).reduce((a,e)=>a+(e.amount||0),0)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);const mx=Math.max(1,...r.map(x=>x.v));
+  // 経費の内訳：在庫品を買った分は外し、使った在庫（材料費）を品目の科目に入れる
+  const mat=matOf(id),mcat={};for(const l of mat.lines)if(l.cost){const c=itemCat(l.itemId)||'在庫';mcat[c]=(mcat[c]||0)+l.cost}
+  const bars=(kind,cls)=>{const ls2=list.filter(e=>!isMatBuy(e)),extra=kind==='cost'?mcat:{};const r=[...new Set([...(kind==='cost'?costCats():CATS.sale),...ls2.filter(e=>e.kind===kind).map(e=>e.category),...Object.keys(extra)])].map(c=>({c,v:ls2.filter(e=>e.kind===kind&&e.category===c).reduce((a,e)=>a+(e.amount||0),0)+(extra[c]||0)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);const mx=Math.max(1,...r.map(x=>x.v));
     return r.length?r.map(x=>`<div class="cat"><span>${esc(x.c)}</span><span class="track"><span class="fill ${cls}" style="width:${(x.v/mx*100).toFixed(1)}%"></span></span><b>${yen(x.v)}</b></div>`).join(''):`<p class="empty">${kind==='sale'?'売上':'経費'}の記録がありません</p>`};
   $('#saleRows').innerHTML=bars('sale','s');$('#catRows').innerHTML=bars('cost','c');
+  {const bought=list.filter(isMatBuy).reduce((a,e)=>a+(e.amount||0),0);
+   $('#sMat').innerHTML=(bought||mat.cost)?`経費のうち材料費 <b>${yen(mat.cost)}</b>は、このプロジェクトで使った在庫の分です（古く買った物から順に、買ったときの値段で計算）。${bought?`このプロジェクトで買った在庫 ${yen(bought)}は、使った分だけが経費になり、残りは次に繰り越します。`:''}`:''}
 },
 onClick(e){
   let b;
@@ -960,11 +1062,14 @@ async function copyCsv(btn,list){
 // 精算
 // 精算：参加メンバーだけで計算する（参加していない人の記録は、精算にはまったく含めない）
 function payRows(list,p){
-  const M=partsOf(p);list=list.filter(e=>M.includes(e.person));
-  const t=totals(list),share=t.p/M.length;
-  return M.map(n=>{const r=payRow(list,n);r.bal=share-(r.held-r.paid);return r});
+  const M=partsOf(p),pid=p?.id||list[0]?.projectId,mat=pid?matOf(pid):{cost:0,reimb:{}};
+  list=list.filter(e=>M.includes(e.person));
+  const t=totals(list.filter(e=>!isMatBuy(e))),share=(t.p-mat.cost)/M.length;
+  // 使われた在庫を買った人は、参加していなくても、その分だけ受け取る
+  const names=[...M,...Object.keys(mat.reimb).filter(n=>!M.includes(n)&&Math.round(mat.reimb[n]))];
+  return names.map(n=>{const r=payRow(list,n);r.mat=mat.reimb[n]||0;r.member=M.includes(n);r.bal=(r.member?share:0)+r.paid+r.mat-r.held;return r});
 }
-function payRow(list,p){const mine=list.filter(e=>e.person===p);return{p,paid:mine.filter(e=>e.kind==='cost').reduce((a,e)=>a+(e.amount||0),0),held:mine.filter(e=>e.kind==='sale').reduce((a,e)=>a+(e.amount||0),0)}}
+function payRow(list,p){const mine=list.filter(e=>e.person===p);return{p,paid:mine.filter(e=>e.kind==='cost'&&!isMatBuy(e)).reduce((a,e)=>a+(e.amount||0),0),held:mine.filter(e=>e.kind==='sale').reduce((a,e)=>a+(e.amount||0),0)}}
 function moves(rows){
   const pos=rows.map(r=>({p:r.p,v:Math.round(r.bal)})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
   const neg=rows.map(r=>({p:r.p,v:Math.round(r.bal)})).filter(x=>x.v<0).sort((a,b)=>a.v-b.v);
@@ -974,15 +1079,21 @@ function moves(rows){
 }
 function vPay(){const id=R.id;return{title:'精算',back:pBack(),html:`
 <h2>だれがだれに渡すか</h2><ul class="pay" id="moves"></ul>
-<h2>${partsOf(proj(id)).length}人の内訳</h2>
-<div class="scroll"><table><thead><tr><th>メンバー</th><th>立て替えた経費</th><th>手元の売上</th><th>精算額</th></tr></thead><tbody id="payRows"></tbody></table></div>
-<p class="note">このプロジェクトの利益を参加メンバー（${partsOf(proj(id)).map(esc).join(' / ')}）で同じ額に分ける計算です。参加メンバーはイベント詳細で選べます。精算額がプラスの人は受け取り、マイナスの人は渡します。</p>
+<h2 id="payH"></h2>
+<div class="scroll"><table><thead><tr><th>メンバー</th><th>立て替えた経費</th><th>使われた在庫</th><th>手元の売上</th><th>精算額</th></tr></thead><tbody id="payRows"></tbody></table></div>
+<p class="note" id="payNote"></p>
+<h2>このプロジェクトで使った在庫</h2>
+<div id="payMat"></div>
 <p class="note" id="payEx"></p>`,
 refresh(){
-  const all=entriesOf(id),M=partsOf(proj(id)),list=all.filter(e=>M.includes(e.person)),rows=payRows(list,proj(id)),mv=moves(rows),ex=all.length-list.length;
+  const p=proj(id),all=entriesOf(id),M=partsOf(p),list=all.filter(e=>M.includes(e.person)),rows=payRows(list,p),mv=moves(rows),ex=all.length-list.length,mat=matOf(id);
+  $('#payH').textContent=`${M.length}人の内訳`;
+  $('#payNote').innerHTML=`このプロジェクトの利益を参加メンバー（${M.map(esc).join(' / ')}）で同じ額に分ける計算です。参加メンバーはイベント詳細で選べます。精算額がプラスの人は受け取り、マイナスの人は渡します。<br>「使われた在庫」は、その人が買った在庫のうち、このプロジェクトで使われた分です（買ったときに全額ではなく、使われたときに戻ります）。`;
   $('#payEx').textContent=ex?`参加していない人の記録 ${ex}件（${yen(all.filter(e=>!M.includes(e.person)).reduce((a,e)=>a+(e.kind==='sale'?1:-1)*(e.amount||0),0))}）は、精算に含めていません。`:'';
-  $('#payRows').innerHTML=rows.map(r=>`<tr><td>${esc(r.p)}</td><td>${yen(r.paid)}</td><td>${yen(r.held)}</td><td class="${r.bal>=0?'s':'c'}"><b>${r.bal>=0?'+':''}${yen(r.bal)}</b></td></tr>`).join('');
-  $('#moves').innerHTML=list.length?(mv.length?mv.map(m=>`<li>${esc(m[0])} → ${esc(m[1])}<b>${yen(m[2])}</b></li>`).join(''):'<li>精算の必要はありません</li>'):'<li>記録がまだありません</li>';
+  $('#payRows').innerHTML=rows.map(r=>`<tr${r.member?'':' class="out"'}><td>${esc(r.p)}${r.member?'':'<small class="ns">不参加</small>'}</td><td>${yen(r.paid)}</td><td>${yen(r.mat)}</td><td>${yen(r.held)}</td><td class="${r.bal>=0?'s':'c'}"><b>${Math.round(r.bal)>0?'+':''}${yen(r.bal)}</b></td></tr>`).join('');
+  $('#moves').innerHTML=(list.length||mat.cost)?(mv.length?mv.map(m=>`<li>${esc(m[0])} → ${esc(m[1])}<b>${yen(m[2])}</b></li>`).join(''):'<li>精算の必要はありません</li>'):'<li>記録がまだありません</li>';
+  $('#payMat').innerHTML=mat.lines.length?`<ul class="matl">${mat.lines.map(l=>{const it=itemOf(l.itemId),u=esc(unitOf(it));const who=Object.entries(l.by).filter(([,v])=>Math.round(v)).map(([n,v])=>`${esc(n)} ${yen(v)}`).join(' / ');
+    return `<li><span class="nm">${esc(it?.name||'')}<span class="meta">${qf(l.qty)}${u}${who?` / 買った人：${who}`:''}${l.noPrice?` / 値段の記録なし ${qf(l.noPrice)}${u}（0円）`:''}</span></span><b>${yen(l.cost)}</b></li>`}).join('')}<li class="tot"><span class="nm">材料費の合計</span><b>${yen(mat.cost)}</b></li></ul>`:'<p class="note" style="margin:0">このプロジェクトで使った在庫はありません。</p>';
 }}}
 
 // ログイン
@@ -1068,7 +1179,7 @@ function slideIn(k,dx,ghost){
   vw.addEventListener('touchstart',e=>{
     if(!user||!R.id||R.sub==='detail'||e.touches.length!==1)return;
     const t=e.touches[0];
-    if(t.clientX<28||e.target.closest('textarea,.lpbar,.tmpop,.calpop,.drag,.iedit,.scroll'))return;   // 画面の左端は「戻る」のスワイプ、横に流れる表はそのまま
+    if(t.clientX<28||e.target.closest('textarea,.lpbar,.tmpop,.calpop,.drag,.iedit,.iuse,.scroll'))return;   // 画面の左端は「戻る」のスワイプ、横に流れる表はそのまま
     st={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,lock:null,i:PORDER.indexOf(R.sub),hist:[]};
   },{passive:true});
   vw.addEventListener('touchmove',e=>{
@@ -1267,9 +1378,9 @@ $('#view').addEventListener('keydown',e=>{if(e.key==='Escape')tmClose()});
 
 // 品目の編集欄：欄の外を押したら、保存せずに閉じる
 document.addEventListener('pointerdown',e=>{
-  if(!ui.editItem||!$('#view .iedit'))return;
-  if(e.target.closest('.iedit,[data-act="iedit"],.lpbar'))return;
-  ui.editItem=null;V?.refresh?.();
+  if(!(ui.editItem&&$('#view .iedit'))&&!(ui.useItem&&$('#view .iuse')))return;
+  if(e.target.closest('.iedit,.iuse,[data-act="iedit"],[data-act="iuse"],.lpbar'))return;
+  ui.editItem=null;ui.useItem=null;V?.refresh?.();
 },true);
 // ===== 並び替え（在庫・備品）：右端の ≡ をドラッグ =====
 let drg=null;
@@ -1368,6 +1479,7 @@ for(const t of ['change','input']){
   $('#view').addEventListener(t,e=>{if(V&&V[k])V[k](e)});
 }
 function changed(name){
+  SC_CACHE=null;   // 在庫の値段の計算をやり直す
   loaded.add(name);
   if(user)drawMenu();
   if(!V)return;
