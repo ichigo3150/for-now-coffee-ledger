@@ -1,7 +1,7 @@
 // アプリの画面（HTML・CSS・JS・アイコン）を端末に保存して、電波がなくても開けるようにする仕組み。
 // 記録データの同期は Firebase 側が自動でやるので、ここでは扱いません。
 // ファイルを更新したら VERSION の数字を1つ上げると、各端末に新しい版が届きます。
-const VERSION='v16';
+const VERSION='v17';
 const CACHE = 'coffee-ledger-' + VERSION;
 const FILES = [
   './',

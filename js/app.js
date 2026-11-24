@@ -192,11 +192,6 @@ function vNew(){return{title:'プロジェクト作成',html:`
 </form>`,
 init(){$('#pdate').value=today();$('#pend').value=today();setPType(ui.ptype)},
 onClick(e){const b=e.target.closest('#ptype button');if(b)setPType(b.dataset.v)},
-onChange(e){
-  // 開始日を動かしたら、終了日がそれより前にならないようにする
-  if(e.target.id==='pdate'){const s=$('#pdate').value,en=$('#pend');if(s&&(!en.value||en.value<s))en.value=s}
-  if(e.target.id==='pend'){const s=$('#pdate').value;if(s&&e.target.value&&e.target.value<s){e.target.value=s;toast('終了日は開始日より後にしてください',true)}}
-},
 onSubmit(e){
   e.preventDefault();
   const name=$('#pname').value.trim();
@@ -1051,34 +1046,55 @@ function show(){
   presSend({x:null,y:null,focus:null});presDraw();
   fixHistory();
   // スワイプで来たときは、指を動かした方向から新しいページが入ってくる
-  if(ui.swipeIn){const vw=$('#view'),d=ui.swipeIn;ui.swipeIn=0;vw.style.transition='none';vw.style.transform=`translateX(${d*35}%)`;vw.style.opacity='.3';vw.offsetWidth;vw.style.transition='transform .26s cubic-bezier(.2,.8,.2,1),opacity .26s';vw.style.transform='';vw.style.opacity='';setTimeout(()=>{vw.style.transition=''},300)}
+  if(ui.swipeIn){const {k,dx,ghost}=ui.swipeIn;ui.swipeIn=null;slideIn(k,dx,ghost)}
 }
-// ===== プロジェクトのページを指で左右にスワイプして切り替える（全ページ共通。指に合わせてページが引っぱられる） =====
+// ===== プロジェクトのページを指で左右にスワイプして切り替える（全ページ共通） =====
+// 指に合わせてページが動き、離すと「いまのページ」と「となりのページ」が並んだまま一緒にすべる
+const SLIDE='cubic-bezier(.22,.8,.25,1)';
+function slideIn(k,dx,ghost){
+  const vw=$('#view'),W=innerWidth,dur=Math.round(Math.max(180,Math.min(300,(W-Math.abs(dx))/W*320)));
+  vw.style.transition='none';vw.style.transform=`translate3d(${dx+k*W}px,0,0)`;
+  if(ghost)ghost.style.transform=`translate3d(${dx}px,0,0)`;
+  vw.offsetWidth;
+  requestAnimationFrame(()=>{
+    vw.style.transition=`transform ${dur}ms ${SLIDE}`;vw.style.transform='translate3d(0,0,0)';
+    if(ghost){ghost.style.transition=`transform ${dur}ms ${SLIDE}`;ghost.style.transform=`translate3d(${-k*W}px,0,0)`}
+    setTimeout(()=>{vw.style.transition='';vw.style.transform='';vw.style.willChange='';ghost?.remove()},dur+40);
+  });
+}
 (()=>{
-  const vw=$('#view');let st=null;
+  const vw=$('#view');let st=null,raf=0;
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)');
   vw.addEventListener('touchstart',e=>{
     if(!user||!R.id||R.sub==='detail'||e.touches.length!==1)return;
     const t=e.touches[0];
-    if(t.clientX<28||e.target.closest('textarea,.lpbar,.tmpop,.calpop,.drag,.iedit'))return;   // 画面の左端は「戻る」のスワイプに使う
-    st={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,lock:null,i:PORDER.indexOf(R.sub)};
+    if(t.clientX<28||e.target.closest('textarea,.lpbar,.tmpop,.calpop,.drag,.iedit,.scroll'))return;   // 画面の左端は「戻る」のスワイプ、横に流れる表はそのまま
+    st={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,lock:null,i:PORDER.indexOf(R.sub),hist:[]};
   },{passive:true});
   vw.addEventListener('touchmove',e=>{
     if(!st)return;const t=e.touches[0],dx=t.clientX-st.x,dy=t.clientY-st.y;
-    if(st.lock===null){if(Math.abs(dx)<8&&Math.abs(dy)<8)return;st.lock=Math.abs(dx)>Math.abs(dy)*1.2?'x':'y';if(st.lock==='x')lpCancel()}
+    if(st.lock===null){if(Math.abs(dx)<8&&Math.abs(dy)<8)return;st.lock=Math.abs(dx)>Math.abs(dy)*1.2?'x':'y';if(st.lock==='x'){lpCancel();st.x=t.clientX;vw.style.willChange='transform';vw.style.transition='none'}}
     if(st.lock!=='x')return;
     e.preventDefault();
-    let d=dx;if((d>0&&st.i<=0)||(d<0&&st.i>=PORDER.length-1))d*=0.3;   // 端ではゴムのように少しだけ
-    st.dx=d;vw.style.transition='none';vw.style.transform=`translateX(${d}px)`;vw.style.opacity=String(1-Math.min(.5,Math.abs(d)/innerWidth*.7));
+    let d=t.clientX-st.x;if((d>0&&st.i<=0)||(d<0&&st.i>=PORDER.length-1))d*=0.3;   // 端ではゴムのように少しだけ
+    st.dx=d;const now=Date.now();st.hist.push([now,d]);while(st.hist.length>1&&now-st.hist[0][0]>100)st.hist.shift();
+    if(!raf)raf=requestAnimationFrame(()=>{raf=0;if(st)vw.style.transform=`translate3d(${st.dx}px,0,0)`});
   },{passive:false});
   const end=()=>{
-    if(!st)return;const s=st;st=null;if(s.lock!=='x')return;
-    const w=innerWidth,v=s.dx/Math.max(1,Date.now()-s.t);let k=0;
-    if((s.dx<-w*0.22||v<-0.45)&&PORDER[s.i+1])k=1;
-    if((s.dx>w*0.22||v>0.45)&&s.i>0)k=-1;
-    vw.style.transition='transform .2s ease,opacity .2s';
-    if(!k){vw.style.transform='';vw.style.opacity='';setTimeout(()=>{vw.style.transition=''},220);return}
-    vw.style.transform=`translateX(${-k*110}%)`;vw.style.opacity='0';
-    setTimeout(()=>{ui.swipeIn=k;vw.style.transition='';location.hash=phash(R.id,PORDER[s.i+k])},190);
+    if(!st)return;const s=st;st=null;if(raf){cancelAnimationFrame(raf);raf=0}if(s.lock!=='x')return;
+    const W=innerWidth,h=s.hist,v=h.length>1?(h[h.length-1][1]-h[0][1])/Math.max(1,h[h.length-1][0]-h[0][0]):0;   // 直近0.1秒の速さ
+    let k=0;
+    if((s.dx<-W*0.25||v<-0.4)&&v<0.2&&PORDER[s.i+1])k=1;
+    if((s.dx>W*0.25||v>0.4)&&v>-0.2&&s.i>0)k=-1;
+    if(!k){vw.style.transition=`transform .25s ${SLIDE}`;vw.style.transform='translate3d(0,0,0)';setTimeout(()=>{vw.style.transition='';vw.style.transform='';vw.style.willChange=''},280);return}
+    let ghost=null;
+    if(!reduce.matches){   // いまのページの写しを同じ位置に置いて、新しいページと並べてすべらせる
+      const r=vw.getBoundingClientRect();ghost=vw.cloneNode(true);ghost.removeAttribute('id');for(const n of ghost.querySelectorAll('[id]'))n.removeAttribute('id');
+      ghost.className='vghost';Object.assign(ghost.style,{top:r.top+'px',left:r.left+'px',width:r.width+'px',transform:`translate3d(${s.dx}px,0,0)`,transition:'none'});
+      vw.after(ghost);
+    }
+    ui.swipeIn=ghost?{k,dx:s.dx,ghost}:null;vw.style.transform='';vw.style.willChange='';
+    location.hash=phash(R.id,PORDER[s.i+k]);
   };
   vw.addEventListener('touchend',end);vw.addEventListener('touchcancel',end);
 })();
@@ -1215,6 +1231,12 @@ $('#view').addEventListener('click',e=>{
   if(b){el.value=b.dataset.d;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));calClose();el.blur()}
 },true);
 $('#view').addEventListener('focusin',e=>{if(e.target.matches?.('input[type=date]'))calOpen(e.target)});
+// 開始日と終了日：開始日を入れたら終了日も同じ日に。終了日に開始日より前を選んだら、開始日と同じ日にそろえる
+{const PAIR={pdate:'pend',dDate:'dEnd'},REV={pend:'pdate',dEnd:'dDate'};
+ const fixDates=e=>{const id=e.target.id;
+   if(PAIR[id]){const en=$('#'+PAIR[id]);if(en&&e.target.value)en.value=e.target.value}
+   else if(REV[id]){const st=$('#'+REV[id]);if(st&&st.value&&(!e.target.value||e.target.value<st.value))e.target.value=st.value}};
+ $('#view').addEventListener('change',fixDates);$('#view').addEventListener('blur',e=>{if(REV[e.target.id])fixDates(e)},true);}
 $('#view').addEventListener('focusout',()=>setTimeout(()=>{if(!document.activeElement?.matches?.('input[type=date]'))calClose()},150));
 $('#view').addEventListener('keydown',e=>{if(e.key==='Escape')calClose()});
 document.addEventListener('mousedown',e=>{if(!e.target.closest('.calpop,input[type=date]'))calClose()});
