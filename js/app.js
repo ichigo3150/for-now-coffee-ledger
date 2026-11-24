@@ -1007,7 +1007,7 @@ async onClick(e){
 // ===== ページの切り替え =====
 const VIEWS={home:vHome,new:vNew,list:vList,stock:()=>vItems('stock'),gear:()=>vItems('gear'),shop:vShop,hub:vHub,detail:vDetail,pack:vPack,money:vMoney,pay:vPay};
 // プロジェクトの中は、上の見出し（タブ）で全ページに行き来する。経費 / トランザクション / 集計 は同じページの中の切り替え
-const PTABS=[['cost','経費'],['pack','在庫 / 備品'],['log','トランザクション'],['sum','集計'],['pay','精算'],['detail','詳細']];
+const PTABS=[['cost','経費'],['pack','在庫 / 備品'],['log','トランザクション'],['sum','集計'],['pay','精算']];   // 詳細はプロジェクト名の横のボタンから
 const SUB2M={cost:'in',log:'log',sum:'sum'},M2SUB={in:'cost',log:'log',sum:'sum'};
 function parse(){
   const p=location.hash.replace(/^#\/?/,'').split('/');
@@ -1036,7 +1036,12 @@ function show(){
   if(pj){v.title=pj.name;v.back=['#list','一覧']}   // プロジェクトの中は、見出しにプロジェクト名
   drawPtabs(pj);
   $('#title').textContent=v.title;document.title=v.title&&v.title!=='Ledger'?v.title+'｜Ledger':'Ledger';
-  if(pj)document.title=(PTABS.find(t=>t[0]===R.sub)?.[1]||'')+'｜'+pj.name;
+  if(pj){
+    // プロジェクト名と、その右の「イベント詳細」ボタン。どちらを押しても詳細のページへ
+    const dl=pj.type==='event'?'イベント詳細':'店舗詳細',href=`#p/${esc(pj.id)}/detail`;
+    $('#title').innerHTML=`<a class="tlink" href="${href}" title="${dl}を開く">${esc(pj.name)}</a><a class="dbtn" href="${href}"${R.sub==='detail'?' aria-current="page"':''}>${dl}</a>`;
+    document.title=(R.sub==='detail'?dl:(PTABS.find(t=>t[0]===R.sub)?.[1]||''))+'｜'+pj.name;
+  }
   const b=$('#back');b.hidden=!v.back;if(v.back){b.href=v.back[0];b.textContent='‹ '+v.back[1]}
   $('#view').innerHTML=v.html;
   v.init?.();v.refresh?.();
