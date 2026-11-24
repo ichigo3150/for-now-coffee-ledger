@@ -133,6 +133,7 @@ refresh(){
   const vis=D.projects.reduce((a,p)=>a+(p.visitors||0),0);$('#tVisW').hidden=!vis;$('#tVis').textContent=vis.toLocaleString('ja-JP')+'人';
   $('#tType').innerHTML=['event','shop'].map(k=>{const ps=D.projects.filter(p=>p.type===k),pi=new Set(ps.map(p=>p.id)),x=totals(all.filter(e=>pi.has(e.projectId)));
     return `<tr><td><b>${TYPE[k]}</b></td><td>${ps.length}件</td><td>${yen(x.s)}</td><td>${yen(x.c)}</td><td class="${x.p<0?'c':'s'}"><b>${yen(x.p)}</b></td></tr>`}).join('');
+  
   $('#tList').innerHTML=projCards(sortedProjects())||empty('まだプロジェクトがありません。左のメニューの「＋ プロジェクト作成」から始めましょう。');
 },
 onLpDelete(li){deleteProject(li.dataset.id)}}}
@@ -204,7 +205,7 @@ onSubmit(e){
   const d0=t==='event'?($('#pdate').value||''):'',d1=t==='event'?($('#pend').value||''):'';
   setDoc(ref,{type:t,name,date:d0,endDate:d1&&d1>d0?d1:'',createdAt:Date.now(),...stamp()}).catch(writeErr);
   toast('作成しました：'+name);
-  location.replace('#p/'+ref.id);
+  location.hash='#list';   // 作成したら一覧へ（作ったプロジェクトは一覧の中から開く）
 }}}
 
 // プロジェクト一覧
@@ -752,7 +753,7 @@ function mSwipe(){
   };
   box.addEventListener('touchend',end);box.addEventListener('touchcancel',end);
 }
-function mTab(t){ui.mtab=t;if(R.name==='money'&&R.id){const s=M2SUB[t];if(R.sub!==s){R.sub=s;try{history.replaceState(null,'',`#p/${R.id}/${s}`)}catch(err){}}drawPtabs(proj(R.id))}for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===t));for(const s of ['in','log','sum'])$('#m-'+s).hidden=s!==t;for(const ta of $$('#view .memo-ta'))growMemo(ta)}
+function mTab(t){ui.mtab=t;if(R.name==='money'&&R.id){const s=M2SUB[t];if(R.sub!==s){R.sub=s;fixHistory()}drawPtabs(proj(R.id))}for(const b of $$('#mtab button'))b.setAttribute('aria-selected',String(b.dataset.t===t));for(const s of ['in','log','sum'])$('#m-'+s).hidden=s!==t;for(const ta of $$('#view .memo-ta'))growMemo(ta)}
 function resetEntry(){ui.editId=null;ui.bBean=null;ui.bDest=null;$('#bItem').value='';$('#bQty').value='';drawBuy();$('#amount').value='';$('#memo').value='';growMemo($('#memo'));$('#eurl').value='';$('#save').textContent='記録する';$('#cancelWrap').hidden=true}
 function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トランザクション / 集計',back:pBack(),html:`
 <div class="mswipe" id="mswipe">
@@ -812,7 +813,7 @@ function vMoney(){const id=R.id;ui.editId=null;return{title:'経費 / トラン�
 </div>`,
 init(){
   const p=proj(id);$('#date').value=(p.type==='event'&&p.date)?p.date:today();
-  drawKind();drawPeople();mTab(ui.mtab);mSwipe();
+  drawKind();drawPeople();mTab(ui.mtab);   // 左右のスワイプは、プロジェクトの全ページ共通の仕組み（下の pageSwipe）で行う
 },
 refresh(){
   drawKind();   // 屋号情報で科目が変わったら並べ直す
@@ -1048,6 +1049,54 @@ function show(){
   for(const ta of $$('#view .memo-ta'))growMemo(ta);
   window.scrollTo({top:0});
   presSend({x:null,y:null,focus:null});presDraw();
+  fixHistory();
+  // スワイプで来たときは、指を動かした方向から新しいページが入ってくる
+  if(ui.swipeIn){const vw=$('#view'),d=ui.swipeIn;ui.swipeIn=0;vw.style.transition='none';vw.style.transform=`translateX(${d*35}%)`;vw.style.opacity='.3';vw.offsetWidth;vw.style.transition='transform .26s cubic-bezier(.2,.8,.2,1),opacity .26s';vw.style.transform='';vw.style.opacity='';setTimeout(()=>{vw.style.transition=''},300)}
+}
+// ===== プロジェクトのページを指で左右にスワイプして切り替える（全ページ共通。指に合わせてページが引っぱられる） =====
+(()=>{
+  const vw=$('#view');let st=null;
+  vw.addEventListener('touchstart',e=>{
+    if(!user||!R.id||R.sub==='detail'||e.touches.length!==1)return;
+    const t=e.touches[0];
+    if(t.clientX<28||e.target.closest('textarea,.lpbar,.tmpop,.calpop,.drag,.iedit'))return;   // 画面の左端は「戻る」のスワイプに使う
+    st={x:t.clientX,y:t.clientY,t:Date.now(),dx:0,lock:null,i:PORDER.indexOf(R.sub)};
+  },{passive:true});
+  vw.addEventListener('touchmove',e=>{
+    if(!st)return;const t=e.touches[0],dx=t.clientX-st.x,dy=t.clientY-st.y;
+    if(st.lock===null){if(Math.abs(dx)<8&&Math.abs(dy)<8)return;st.lock=Math.abs(dx)>Math.abs(dy)*1.2?'x':'y';if(st.lock==='x')lpCancel()}
+    if(st.lock!=='x')return;
+    e.preventDefault();
+    let d=dx;if((d>0&&st.i<=0)||(d<0&&st.i>=PORDER.length-1))d*=0.3;   // 端ではゴムのように少しだけ
+    st.dx=d;vw.style.transition='none';vw.style.transform=`translateX(${d}px)`;vw.style.opacity=String(1-Math.min(.5,Math.abs(d)/innerWidth*.7));
+  },{passive:false});
+  const end=()=>{
+    if(!st)return;const s=st;st=null;if(s.lock!=='x')return;
+    const w=innerWidth,v=s.dx/Math.max(1,Date.now()-s.t);let k=0;
+    if((s.dx<-w*0.22||v<-0.45)&&PORDER[s.i+1])k=1;
+    if((s.dx>w*0.22||v>0.45)&&s.i>0)k=-1;
+    vw.style.transition='transform .2s ease,opacity .2s';
+    if(!k){vw.style.transform='';vw.style.opacity='';setTimeout(()=>{vw.style.transition=''},220);return}
+    vw.style.transform=`translateX(${-k*110}%)`;vw.style.opacity='0';
+    setTimeout(()=>{ui.swipeIn=k;vw.style.transition='';location.hash=phash(R.id,PORDER[s.i+k])},190);
+  };
+  vw.addEventListener('touchend',end);vw.addEventListener('touchcancel',end);
+})();
+// ===== プロジェクトのページの順番と「戻る」 =====
+// 見出しの順（経費 → 在庫/備品 → トランザクション → 集計 → 精算）。戻るときは、いつも「いまのページの一つ前」へ
+const PORDER=['cost','pack','log','sum','pay'];
+const phash=(id,s)=>`#p/${id}/${s}`;
+function prevHash(){
+  if(!R.id||!proj(R.id))return null;
+  if(R.sub==='detail')return phash(R.id,'cost');
+  const i=PORDER.indexOf(R.sub);return i>0?phash(R.id,PORDER[i-1]):'#list';
+}
+// ブラウザの「戻る」（iPhoneの画面の端からのスワイプなど）でも一つ前のページに行くよう、履歴を「一つ前 → いま」の形にそろえる
+function fixHistory(){
+  const pv=prevHash();if(!pv)return;
+  const cur=phash(R.id,R.sub);
+  if(history.state?.prep&&history.state.lg===cur&&location.hash===cur)return;   // すでに「一つ前 → いま」になっている
+  try{history.replaceState({lg:pv},'',pv);history.pushState({lg:cur,prep:true},'',cur)}catch(err){}
 }
 window.addEventListener('hashchange',show);
 
@@ -1109,7 +1158,7 @@ window.addEventListener('resize',presDraw);
 (()=>{
   const ind=document.createElement('div');ind.className='swipe';ind.textContent='‹';ind.setAttribute('aria-hidden','true');document.body.appendChild(ind);
   const TH=120;let acc=0,timer=null,lock=false,unlock=null;
-  const target=()=>!user?null:(V?.back?.[0]||(R.name!=='home'&&!R.id?'#/':null));
+  const target=()=>!user?null:(R.id?prevHash():(V?.back?.[0]||(R.name!=='home'?'#/':null)));   // プロジェクトの中は一つ前のページへ
   const showP=p=>{p=Math.max(0,Math.min(1,p));ind.style.opacity=p;ind.style.transform=`translateX(${p*60-60}px)`;ind.classList.toggle('go',p>=1)};
   const reset=()=>{acc=0;showP(0)};
   const go=()=>{const t=target();reset();if(t)location.hash=t};
